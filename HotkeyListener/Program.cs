@@ -51,6 +51,10 @@ public class HotkeyListener
     private static DateTime _lastCtrlPressTime = DateTime.MinValue;
     private static readonly TimeSpan _doublePressThreshold = TimeSpan.FromMilliseconds(300); // 300ms for a double press
 
+    private const int KEYEVENTF_KEYUP = 0x0002;
+    private const byte VK_LCONTROL = 0xA2;
+    private const byte VK_C = 0x43;
+
     // Imports the SetWindowsHookEx function from user32.dll to set a Windows hook.
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -67,6 +71,9 @@ public class HotkeyListener
     // Imports the GetModuleHandle function from kernel32.dll to retrieve a handle to the specified module.
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -128,6 +135,13 @@ public class HotkeyListener
 
     private static async void HandleHotkeyPress()
     {
+        // Simulate Ctrl+C to copy selected text
+        keybd_event(VK_LCONTROL, 0, 0, UIntPtr.Zero);
+        keybd_event(VK_C, 0, 0, UIntPtr.Zero);
+        keybd_event(VK_C, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        keybd_event(VK_LCONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        await Task.Delay(100); // Wait for clipboard to update
+
         string textToTranslate = GetClipboardText();
         if (string.IsNullOrEmpty(textToTranslate))
         {
