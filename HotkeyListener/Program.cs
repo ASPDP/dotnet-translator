@@ -48,6 +48,9 @@ public class HotkeyListener
     private static LowLevelKeyboardProc _proc = HookCallback;
     private static IntPtr _hookID = IntPtr.Zero;
 
+    private static DateTime _lastCtrlPressTime = DateTime.MinValue;
+    private static readonly TimeSpan _doublePressThreshold = TimeSpan.FromMilliseconds(300); // 300ms for a double press
+
     // Imports the SetWindowsHookEx function from user32.dll to set a Windows hook.
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -75,7 +78,7 @@ public class HotkeyListener
         await taskDeepL;
 
         _hookID = SetHook(_proc);
-        Console.WriteLine("F3 hotkey registered. Press F3 to trigger or Esc to exit.");
+        Console.WriteLine("Double-press Ctrl to trigger translation.");
         Application.Run();
         UnhookWindowsHookEx(_hookID);
     }
@@ -98,21 +101,32 @@ public class HotkeyListener
         if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
         {
             int vkCode = Marshal.ReadInt32(lParam);
-            if ((Keys)vkCode == Keys.F3)
+            var key = (Keys)vkCode;
+
+            if (key == Keys.LControlKey || key == Keys.RControlKey)
             {
-                Console.WriteLine("F3 Pressed!");
-                HandleF3Press();
+                TimeSpan elapsed = DateTime.Now - _lastCtrlPressTime;
+                if (elapsed < _doublePressThreshold)
+                {
+                    Console.WriteLine("Double Ctrl Pressed!");
+                    HandleHotkeyPress();
+                    _lastCtrlPressTime = DateTime.MinValue; // Reset after detection
+                }
+                else
+                {
+                    _lastCtrlPressTime = DateTime.Now;
+                }
             }
-            else if ((Keys)vkCode == Keys.Escape)
+            else
             {
-                Console.WriteLine("Escape pressed. Exiting...");
-                Application.Exit();
+                // If any other key is pressed, reset the timer.
+                _lastCtrlPressTime = DateTime.MinValue;
             }
         }
         return CallNextHookEx(_hookID, nCode, wParam, lParam);
     }
 
-    private static async void HandleF3Press()
+    private static async void HandleHotkeyPress()
     {
         string textToTranslate = GetClipboardText();
         if (string.IsNullOrEmpty(textToTranslate))
@@ -122,20 +136,19 @@ public class HotkeyListener
 
         var request = new TranslationRequest
         {
-            text = textToTranslate
+            text = textToTranslate,
+            engine = "google"
         };
 
         if (ContainsRussianSymbols(textToTranslate))
         {
             request.from = "ru";
             request.to = "en";
-            request.engine = "google";
         }
         else
         {
             request.from = "en";
             request.to = "ru";
-            request.engine = "deepl";
         }
 
         string translatedText = await TranslateText(request);
