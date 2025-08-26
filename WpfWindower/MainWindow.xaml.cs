@@ -12,8 +12,6 @@ namespace WpfWindower;
 /// </summary>
 public partial class MainWindow : Window
 {
-    private NamedPipeServerStream? pipeServer;
-
     public MainWindow()
     {
         InitializeComponent();
@@ -22,33 +20,28 @@ public partial class MainWindow : Window
 
     private void StartPipeServer()
     {
-        pipeServer = new NamedPipeServerStream("DotNetTranslatorPipe", PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
         while (true)
         {
             try
             {
-                pipeServer.WaitForConnection();
-                var reader = new StreamReader(pipeServer);
-                var message = reader.ReadToEnd();
-
-                if (!string.IsNullOrEmpty(message))
+                using (var pipeServer = new NamedPipeServerStream("DotNetTranslatorPipe", PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.None))
                 {
-                    Dispatcher.Invoke(() =>
+                    pipeServer.WaitForConnection();
+                    var reader = new StreamReader(pipeServer);
+                    var message = reader.ReadToEnd();
+
+                    if (!string.IsNullOrEmpty(message))
                     {
-                        ShowOverlay(message);
-                    });
+                        Dispatcher.Invoke(() =>
+                        {
+                            ShowOverlay(message);
+                        });
+                    }
                 }
             }
             catch (IOException)
             {
                 // Pipe was closed, loop and wait for a new connection
-            }
-            finally
-            {
-                if (pipeServer.IsConnected)
-                {
-                    pipeServer.Disconnect();
-                }
             }
         }
     }
