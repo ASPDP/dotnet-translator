@@ -43,20 +43,29 @@ public class HealthResponse
 
 public class HotkeyListener
 {
-    public const int HOTKEY_ID = 9000;
-    public const int WM_HOTKEY = 0x0312;
+    private const int WH_KEYBOARD_LL = 13;
+    private const int WM_KEYDOWN = 0x0100;
+    private static LowLevelKeyboardProc _proc = HookCallback;
+    private static IntPtr _hookID = IntPtr.Zero;
 
-    // Imports the RegisterHotKey function from user32.dll to register a system-wide hotkey.
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    // Imports the SetWindowsHookEx function from user32.dll to set a Windows hook.
+    [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
 
-    // Imports the UnregisterHotKey function from user32.dll to unregister a system-wide hotkey.
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    // Imports the UnhookWindowsHookEx function from user32.dll to remove a Windows hook.
+    [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
 
-    // Imports the GetMessage function from user32.dll to retrieve a message from the calling thread's message queue.
-    [DllImport("user32.dll")]
-    public static extern bool GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+    // Imports the CallNextHookEx function from user32.dll to pass the hook information to the next hook procedure.
+    [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+    // Imports the GetModuleHandle function from kernel32.dll to retrieve a handle to the specified module.
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
     public static async Task Main()
     {
@@ -65,59 +74,76 @@ public class HotkeyListener
         await tskMozhi;
         await taskDeepL;
 
-        // Register F3 hotkey
-        if (!RegisterHotKey(IntPtr.Zero, HOTKEY_ID, 0, (uint)Keys.F3))
+        _hookID = SetHook(_proc);
+        Console.WriteLine("F3 hotkey registered. Press F3 to trigger or Esc to exit.");
+        Application.Run();
+        UnhookWindowsHookEx(_hookID);
+    }
+
+    private static IntPtr SetHook(LowLevelKeyboardProc proc)
+    {
+        using (Process curProcess = Process.GetCurrentProcess())
         {
-            Console.WriteLine("Failed to register hotkey.");
+            ProcessModule? curModule = curProcess.MainModule;
+            if (curModule != null)
+            {
+                return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
+            }
+            return IntPtr.Zero;
+        }
+    }
+
+    private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
+        {
+            int vkCode = Marshal.ReadInt32(lParam);
+            if ((Keys)vkCode == Keys.F3)
+            {
+                Console.WriteLine("F3 Pressed!");
+                HandleF3Press();
+            }
+            else if ((Keys)vkCode == Keys.Escape)
+            {
+                Console.WriteLine("Escape pressed. Exiting...");
+                Application.Exit();
+            }
+        }
+        return CallNextHookEx(_hookID, nCode, wParam, lParam);
+    }
+
+    private static async void HandleF3Press()
+    {
+        string textToTranslate = GetClipboardText();
+        if (string.IsNullOrEmpty(textToTranslate))
+        {
             return;
         }
 
-        Console.WriteLine("F3 hotkey registered. Press F3 to trigger or Esc to exit.");
-
-        MSG msg;
-        while (GetMessage(out msg, IntPtr.Zero, 0, 0))
+        var request = new TranslationRequest
         {
-            if (msg.message == WM_HOTKEY)
-            {
-                if (msg.wParam.ToInt32() == HOTKEY_ID)
-                {
-                    Console.WriteLine("F3 Pressed!");
+            text = textToTranslate
+        };
 
-                    string textToTranslate = GetClipboardText();
-                    if (string.IsNullOrEmpty(textToTranslate))
-                    {
-                        continue;
-                    }
-
-                    var request = new TranslationRequest
-                    {
-                        text = textToTranslate
-                    };
-
-                    if (ContainsRussianSymbols(textToTranslate))
-                    {
-                        request.from = "ru";
-                        request.to = "en";
-                        request.engine = "google";
-                    }
-                    else
-                    {
-                        request.from = "en";
-                        request.to = "ru";
-                        request.engine = "deepl";
-                    }
-
-                    string translatedText = await TranslateText(request);
-
-                    if (!string.IsNullOrEmpty(translatedText))
-                    {
-                        SendMessageToWindower(translatedText);
-                    }
-                }
-            }
+        if (ContainsRussianSymbols(textToTranslate))
+        {
+            request.from = "ru";
+            request.to = "en";
+            request.engine = "google";
+        }
+        else
+        {
+            request.from = "en";
+            request.to = "ru";
+            request.engine = "deepl";
         }
 
-        UnregisterHotKey(IntPtr.Zero, HOTKEY_ID);
+        string translatedText = await TranslateText(request);
+
+        if (!string.IsNullOrEmpty(translatedText))
+        {
+            SendMessageToWindower(translatedText);
+        }
     }
 
     private static Task CheckAndRunMozhiServer()
