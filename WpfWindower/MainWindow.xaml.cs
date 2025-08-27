@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System.Diagnostics;
+using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Threading.Tasks;
@@ -34,6 +35,7 @@ public partial class MainWindow : Window
                     {
                         Dispatcher.Invoke(() =>
                         {
+                            Debug.WriteLine($"Received message: {message}");
                             ShowOverlay(message);
                         });
                     }

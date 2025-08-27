@@ -105,6 +105,11 @@ public class HotkeyListener
 
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
+        if (_isSimulatingKeyPress)
+        {
+            return CallNextHookEx(_hookID, nCode, wParam, lParam);
+        }
+
         if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
         {
             int vkCode = Marshal.ReadInt32(lParam);
@@ -135,18 +140,28 @@ public class HotkeyListener
 
     private static async void HandleHotkeyPress()
     {
+        _isSimulatingKeyPress = true;
+        try
+    {
         // Simulate Ctrl+C to copy selected text
         keybd_event(VK_LCONTROL, 0, 0, UIntPtr.Zero);
         keybd_event(VK_C, 0, 0, UIntPtr.Zero);
         keybd_event(VK_C, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
         keybd_event(VK_LCONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
         await Task.Delay(100); // Wait for clipboard to update
+        }
+        finally
+        {
+            _isSimulatingKeyPress = false;
+        }
 
         string textToTranslate = GetClipboardText();
         if (string.IsNullOrEmpty(textToTranslate))
         {
             return;
         }
+
+        Debug.WriteLine($"Original text: {textToTranslate}");
 
         var request = new TranslationRequest
         {
@@ -169,6 +184,7 @@ public class HotkeyListener
 
         if (!string.IsNullOrEmpty(translatedText))
         {
+            Debug.WriteLine($"Translated text: {translatedText}");
             SendMessageToWindower(translatedText);
         }
     }
