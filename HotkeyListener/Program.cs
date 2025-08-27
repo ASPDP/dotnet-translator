@@ -41,16 +41,22 @@ public class HealthResponse
     public string? Message { get; set; }
 }
 
+
+
 public class HotkeyListener
 {
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
+    private const int WM_KEYUP = 0x0101;
     private static LowLevelKeyboardProc _proc = HookCallback;
     private static IntPtr _hookID = IntPtr.Zero;
     private static bool _isSimulatingKeyPress = false;
+    private static bool _ctrlDown = false;
+    private static string? _lastTextToTranslate;
+    private static string? _lastTranslatedText;
 
     private static DateTime _lastCtrlPressTime = DateTime.MinValue;
-    private static readonly TimeSpan _doublePressThreshold = TimeSpan.FromMilliseconds(300); // 300ms for a double press
+    private static readonly TimeSpan _doublePressThreshold = TimeSpan.FromMilliseconds(500); // 300ms for a double press
 
     private const int KEYEVENTF_KEYUP = 0x0002;
     private const byte VK_LCONTROL = 0xA2;
@@ -77,11 +83,12 @@ public class HotkeyListener
     private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-
     public static async Task Main()
     {
+        var tskWindower = CheckAndRunWindower();
         var tskMozhi = CheckAndRunMozhiServer();
         var taskDeepL = CheckAndRunDeepLServer();
+        await tskWindower;
         await tskMozhi;
         await taskDeepL;
 
@@ -111,26 +118,37 @@ public class HotkeyListener
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
 
-        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
+        if (nCode >= 0)
         {
             int vkCode = Marshal.ReadInt32(lParam);
             var key = (Keys)vkCode;
 
             if (key == Keys.LControlKey || key == Keys.RControlKey)
             {
-                TimeSpan elapsed = DateTime.Now - _lastCtrlPressTime;
-                if (elapsed < _doublePressThreshold)
+                if (wParam == (IntPtr)WM_KEYDOWN)
                 {
-                    Console.WriteLine("Double Ctrl Pressed!");
-                    HandleHotkeyPress();
-                    _lastCtrlPressTime = DateTime.MinValue; // Reset after detection
+                    if (!_ctrlDown)
+                    {
+                        _ctrlDown = true;
+                        TimeSpan elapsed = DateTime.Now - _lastCtrlPressTime;
+                        if (elapsed < _doublePressThreshold)
+                        {
+                            Console.WriteLine("Double Ctrl Pressed!");
+                            HandleHotkeyPress();
+                            _lastCtrlPressTime = DateTime.MinValue; // Reset after detection
+                        }
+                        else
+                        {
+                            _lastCtrlPressTime = DateTime.Now;
+                        }
+                    }
                 }
-                else
+                else if (wParam == (IntPtr)WM_KEYUP)
                 {
-                    _lastCtrlPressTime = DateTime.Now;
+                    _ctrlDown = false;
                 }
             }
-            else
+            else if (wParam == (IntPtr)WM_KEYDOWN)
             {
                 // If any other key is pressed, reset the timer.
                 _lastCtrlPressTime = DateTime.MinValue;
@@ -139,8 +157,12 @@ public class HotkeyListener
         return CallNextHookEx(_hookID, nCode, wParam, lParam);
     }
 
+
+    private static string? DefaultEngine = "yandex";
+    private static string? FallbackEngine = "google";
     private static async void HandleHotkeyPress()
     {
+        SendMessageToWindower("SHOW_RHOMBUS");
         _isSimulatingKeyPress = true;
         try
         {
@@ -162,12 +184,25 @@ public class HotkeyListener
             return;
         }
 
+        if (textToTranslate == _lastTextToTranslate)
+        {
+            if (!string.IsNullOrEmpty(_lastTranslatedText))
+            {
+                Debug.WriteLine($"Using cached translation: {_lastTranslatedText}");
+                SendMessageToWindower(_lastTranslatedText);
+            }
+            return;
+        }
+
+        _lastTextToTranslate = textToTranslate;
+        _lastTranslatedText = null;
+
         Debug.WriteLine($"Original text: {textToTranslate}");
 
         var request = new TranslationRequest
         {
             text = textToTranslate,
-            engine = "google"
+            engine = DefaultEngine
         };
 
         if (ContainsRussianSymbols(textToTranslate))
@@ -185,6 +220,7 @@ public class HotkeyListener
 
         if (!string.IsNullOrEmpty(translatedText))
         {
+            _lastTranslatedText = translatedText;
             Debug.WriteLine($"Translated text: {translatedText}");
             SendMessageToWindower(translatedText);
             SetClipboardText(translatedText);
@@ -201,7 +237,7 @@ public class HotkeyListener
         {
             try
             {
-                Process.Start(mozhiPath);
+                Process.Start(mozhiPath, "serve");
                 Console.WriteLine("Mozhi server started.");
             }
             catch (Exception ex)
@@ -253,8 +289,8 @@ public class HotkeyListener
                     FileName = "python",
                     Arguments = "main.py --server --host 127.0.0.1 --port 3001",
                     WorkingDirectory = @"C:\Users\Admin\source\education\deepl-cli\deepl",
-                    UseShellExecute = true,
-                    CreateNoWindow = false
+                    UseShellExecute = false,
+                    CreateNoWindow = true
                 };
                 Process.Start(processInfo);
                 Console.WriteLine("DeepL server started.");
@@ -265,6 +301,31 @@ public class HotkeyListener
                 Console.WriteLine($"Could not start DeepL server: {ex.Message}");
             }
         }
+    }
+
+    private static Task CheckAndRunWindower()
+    {
+        const string windowerProcessName = "WpfWindower";
+        const string windowerPath = @"C:\Users\Admin\source\education\dotnet-translator\WpfWindower\bin\Debug\net9.0-windows\WpfWindower.exe";
+
+        var processes = Process.GetProcessesByName(windowerProcessName);
+        if (processes.Length == 0)
+        {
+            try
+            {
+                Process.Start(windowerPath);
+                Console.WriteLine("WpfWindower started.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Could not start WpfWindower: {ex.Message}");
+            }
+        }
+        else
+        {
+            Console.WriteLine("WpfWindower is already running.");
+        }
+        return Task.CompletedTask;
     }
 
     private static string GetClipboardText()
@@ -320,7 +381,7 @@ public class HotkeyListener
 
         if (isRetry)
         {
-            engineToUse = "yandex";
+            engineToUse = FallbackEngine;
         }
 
         if (engineToUse == "deepl")

@@ -1,22 +1,67 @@
-﻿using System.Diagnostics;
+﻿using System;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
-using System.Text;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using System.Windows.Interop;
 using System.Windows;
-using System.Windows.Controls;
+using System.Windows.Threading;
 
 namespace WpfWindower;
+public static class WindowsServices
+{
+  const int WS_EX_TRANSPARENT = 0x00000020;
+  const int GWL_EXSTYLE = (-20);
 
+  [DllImport("user32.dll")]
+  static extern int GetWindowLong(IntPtr hwnd, int index);
+
+  [DllImport("user32.dll")]
+  static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
+
+  public static void SetWindowExTransparent(IntPtr hwnd)
+  {
+    var extendedStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+    SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle | WS_EX_TRANSPARENT);
+  }
+}
 /// <summary>
 /// Interaction logic for MainWindow.xaml
 /// </summary>
 public partial class MainWindow : Window
 {
+protected override void OnSourceInitialized(EventArgs e)
+{
+  base.OnSourceInitialized(e);
+  var hwnd = new WindowInteropHelper(this).Handle;
+  WindowsServices.SetWindowExTransparent(hwnd);
+}
+    
     public MainWindow()
     {
         InitializeComponent();
         Task.Run(() => StartPipeServer());
+    }
+
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        OverlayPopup.PlacementTarget = this;
+        OverlayPopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Center;
+        OverlayPopup.MaxWidth = SystemParameters.PrimaryScreenWidth / 5;
+        OverlayBorder.MaxWidth = SystemParameters.PrimaryScreenWidth / 5;
+    }
+
+    private void ShowRhombus()
+    {
+        RhombusPopup.IsOpen = true;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        timer.Tick += (sender, args) =>
+        {
+            RhombusPopup.IsOpen = false;
+            timer.Stop();
+        };
+        timer.Start();
     }
 
     private void StartPipeServer()
@@ -35,8 +80,15 @@ public partial class MainWindow : Window
                     {
                         Dispatcher.Invoke(() =>
                         {
-                            Debug.WriteLine($"Received message: {message}");
-                            ShowOverlay(message);
+                            if (message == "SHOW_RHOMBUS")
+                            {
+                                ShowRhombus();
+                            }
+                            else
+                            {
+                                Debug.WriteLine($"Received message: {message}");
+                                ShowOverlay(message);
+                            }
                         });
                     }
                 }
@@ -50,28 +102,20 @@ public partial class MainWindow : Window
 
     private void ShowOverlay(string text)
     {
-        var overlay = new Window
+        var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        OverlayItems.ItemsSource = lines;
+        OverlayPopup.IsOpen = true;
+
+        var wordCount = text.Split(new[] { ' ', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
+        var readingTimeSeconds = (wordCount / 130.0) * 60.0;
+        var totalSeconds = readingTimeSeconds + 2;
+
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(totalSeconds) };
+        timer.Tick += (sender, args) =>
         {
-            Content = new TextBlock { Text = text, Padding = new Thickness(10), TextWrapping = TextWrapping.Wrap },
-            Width = 300,
-            Height = 150,
-            WindowStyle = WindowStyle.None,
-            AllowsTransparency = true,
-            Background = System.Windows.Media.Brushes.LightGray,
-            Topmost = true,
-            ShowInTaskbar = false,
-            Left = SystemParameters.PrimaryScreenWidth - 310,
-            Top = SystemParameters.PrimaryScreenHeight - 160
+            OverlayPopup.IsOpen = false;
+            timer.Stop();
         };
-
-        overlay.Show();
-
-        Task.Delay(3000).ContinueWith(_ =>
-        {
-            Dispatcher.Invoke(() =>
-            {
-                overlay.Close();
-            });
-        });
+        timer.Start();
     }
 }

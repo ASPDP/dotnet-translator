@@ -5,8 +5,30 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:WpfWindower"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
+        Title="MainWindow" Height="450" Width="800"
+        Loaded="Window_Loaded"
+        >
     <Grid>
-
+        <Popup x:Name="RhombusPopup"
+               Placement="Center"
+               AllowsTransparency="True">
+            <Grid>
+                <Polygon Points="50,0 100,50 50,100 0,50" Fill="Red" />
+            </Grid>
+        </Popup>
+        <Popup x:Name="OverlayPopup"
+               Placement="Center"
+               AllowsTransparency="True"
+               >
+            <Border x:Name="OverlayBorder" Background="#80000000" CornerRadius="10" Padding="20" >
+                <ItemsControl x:Name="OverlayItems" >
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" Foreground="White" FontSize="20" TextWrapping="Wrap" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
+        </Popup>
     </Grid>
 </Window>
