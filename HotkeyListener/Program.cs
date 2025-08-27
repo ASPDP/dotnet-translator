@@ -47,6 +47,7 @@ public class HotkeyListener
     private const int WM_KEYDOWN = 0x0100;
     private static LowLevelKeyboardProc _proc = HookCallback;
     private static IntPtr _hookID = IntPtr.Zero;
+    private static bool _isSimulatingKeyPress = false;
 
     private static DateTime _lastCtrlPressTime = DateTime.MinValue;
     private static readonly TimeSpan _doublePressThreshold = TimeSpan.FromMilliseconds(300); // 300ms for a double press
@@ -142,13 +143,13 @@ public class HotkeyListener
     {
         _isSimulatingKeyPress = true;
         try
-    {
-        // Simulate Ctrl+C to copy selected text
-        keybd_event(VK_LCONTROL, 0, 0, UIntPtr.Zero);
-        keybd_event(VK_C, 0, 0, UIntPtr.Zero);
-        keybd_event(VK_C, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-        keybd_event(VK_LCONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-        await Task.Delay(100); // Wait for clipboard to update
+        {
+            // Simulate Ctrl+C to copy selected text
+            keybd_event(VK_LCONTROL, 0, 0, UIntPtr.Zero);
+            keybd_event(VK_C, 0, 0, UIntPtr.Zero);
+            keybd_event(VK_C, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+            keybd_event(VK_LCONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+            await Task.Delay(100); // Wait for clipboard to update
         }
         finally
         {
@@ -186,6 +187,7 @@ public class HotkeyListener
         {
             Debug.WriteLine($"Translated text: {translatedText}");
             SendMessageToWindower(translatedText);
+            SetClipboardText(translatedText);
         }
     }
 
@@ -288,34 +290,88 @@ public class HotkeyListener
         return clipboardText;
     }
 
+    private static void SetClipboardText(string text)
+    {
+        Thread staThread = new Thread(() =>
+        {
+            try
+            {
+                Clipboard.SetText(text);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error setting clipboard text: {ex.Message}");
+            }
+        });
+        staThread.SetApartmentState(ApartmentState.STA);
+        staThread.Start();
+        staThread.Join();
+    }
+
     private static bool ContainsRussianSymbols(string text)
     {
         return Regex.IsMatch(text, @"[\u0400-\u04FF]");
     }
 
-    private static async Task<string> TranslateText(TranslationRequest request)
+    private static async Task<string> TranslateText(TranslationRequest request, bool isRetry = false)
     {
         var port = 3000;
-        if (request.engine == "deepl")
+        var engineToUse = request.engine;
+
+        if (isRetry)
         {
-            port = 3001;
+            engineToUse = "yandex";
         }
 
-        string url = $"http://127.0.0.1:{port}/api/translate?engine={request.engine}&from={request.from}&to={request.to}&text={Uri.EscapeDataString(request.text ?? string.Empty)}";
+        if (engineToUse == "deepl")
+        {
+            port = 3001;
+            engineToUse = "google"; // т.к. сервер deepl неправильно принимает google вместо нужного deepl :) надо исправить сервр python
+        }
+
+        var engine = Uri.EscapeDataString(engineToUse ?? string.Empty);
+        var from = Uri.EscapeDataString(request.from ?? string.Empty);
+        var to = Uri.EscapeDataString(request.to ?? string.Empty);
+        var text = Uri.EscapeDataString(request.text ?? string.Empty);
+
+        string url = $"http://127.0.0.1:{port}/api/translate?engine={engine}&from={from}&to={to}&text={text}";
 
         using (var httpClient = new HttpClient())
         {
             try
             {
                 var response = await httpClient.GetAsync(url);
-                response.EnsureSuccessStatusCode();
-                var responseBody = await response.Content.ReadAsStringAsync();
-                var translationResponse = JsonSerializer.Deserialize<TranslationResponse>(responseBody);
-                return translationResponse?.TranslatedText ?? string.Empty;
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var responseBody = await response.Content.ReadAsStringAsync();
+                    var translationResponse = JsonSerializer.Deserialize<TranslationResponse>(responseBody);
+                    return translationResponse?.TranslatedText ?? string.Empty;
+                }
+                else
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    Console.WriteLine($"Error calling translation API with engine {engineToUse}: {response.StatusCode} - {errorContent}");
+
+                    if (!isRetry)
+                    {
+                        Console.WriteLine("Retrying with yandex engine.");
+                        return await TranslateText(request, true);
+                    }
+
+                    return string.Empty;
+                }
             }
             catch (HttpRequestException e)
             {
-                Console.WriteLine($"Error calling translation API: {e.Message}");
+                Console.WriteLine($"Error calling translation API with engine {engineToUse}: {e.Message}");
+
+                if (!isRetry)
+                {
+                    Console.WriteLine("Retrying with yandex engine.");
+                    return await TranslateText(request, true);
+                }
+
                 return string.Empty;
             }
         }
