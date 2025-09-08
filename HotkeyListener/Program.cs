@@ -158,8 +158,8 @@ public class HotkeyListener
     }
 
 
-    private static string? DefaultEngine = "yandex";
-    private static string? FallbackEngine = "google";
+    private static string? DefaultEngine = "google";
+    private static string? FallbackEngine = "yandex";
     private static async void HandleHotkeyPress()
     {
         SendMessageToWindower("SHOW_RHOMBUS");
