@@ -31,6 +31,7 @@ public static class WindowsServices
 /// </summary>
 public partial class MainWindow : Window
 {
+    private DispatcherTimer _overlayTimer;
 protected override void OnSourceInitialized(EventArgs e)
 {
   base.OnSourceInitialized(e);
@@ -106,16 +107,37 @@ protected override void OnSourceInitialized(EventArgs e)
         OverlayItems.ItemsSource = lines;
         OverlayPopup.IsOpen = true;
 
+        // Stop any previous overlay timer to avoid closing a new popup
+        if (_overlayTimer != null)
+        {
+            _overlayTimer.Stop();
+            _overlayTimer = null;
+        }
+
         var wordCount = text.Split(new[] { ' ', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
         var readingTimeSeconds = (wordCount / 130.0) * 60.0;
         var totalSeconds = readingTimeSeconds + 2;
 
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(totalSeconds) };
-        timer.Tick += (sender, args) =>
+        _overlayTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(totalSeconds) };
+        _overlayTimer.Tick += (sender, args) =>
         {
             OverlayPopup.IsOpen = false;
-            timer.Stop();
+            if (_overlayTimer != null)
+            {
+                _overlayTimer.Stop();
+                _overlayTimer = null;
+            }
         };
-        timer.Start();
+        _overlayTimer.Start();
+    }
+
+    private void CloseOverlayButton_Click(object sender, RoutedEventArgs e)
+    {
+        OverlayPopup.IsOpen = false;
+        if (_overlayTimer != null)
+        {
+            _overlayTimer.Stop();
+            _overlayTimer = null;
+        }
     }
 }
