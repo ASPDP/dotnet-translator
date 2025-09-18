@@ -43,16 +43,16 @@ internal sealed class WindowerClient
             {
                 byte[] messageBytes = Encoding.UTF8.GetBytes(message);
                 client.Write(messageBytes, 0, messageBytes.Length);
-                Console.WriteLine("Message sent to windower.");
+                ConsoleLog.Success("Message sent to windower.");
             }
             else
             {
-                Console.WriteLine("Could not connect to the windower pipe.");
+                ConsoleLog.Warning("Could not connect to the windower pipe.");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error sending message to windower: {ex.Message}");
+            ConsoleLog.Error($"Error sending message to windower: {ex.Message}");
         }
     }
 

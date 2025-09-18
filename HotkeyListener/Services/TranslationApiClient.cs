@@ -45,7 +45,7 @@ internal sealed class TranslationApiClient
             return null;
         }
 
-        Console.WriteLine("Retrying with yandex engine.");
+        ConsoleLog.Warning("Retrying with yandex engine.");
         var fallbackRequest = new TranslationRequest
         {
             Text = request.Text,
@@ -91,18 +91,18 @@ internal sealed class TranslationApiClient
             }
 
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            Console.WriteLine($"Error calling translation API with engine {engine}: {response.StatusCode} - {errorContent}");
+            ConsoleLog.Error($"Error calling translation API with engine {engine}: {response.StatusCode} - {errorContent}");
         }
         catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
         catch (HttpRequestException ex)
         {
-            Console.WriteLine($"Error calling translation API with engine {engine}: {ex.Message}");
+            ConsoleLog.Error($"Error calling translation API with engine {engine}: {ex.Message}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Unexpected error calling translation API with engine {engine}: {ex.Message}");
+            ConsoleLog.Error($"Unexpected error calling translation API with engine {engine}: {ex.Message}");
         }
 
         return null;

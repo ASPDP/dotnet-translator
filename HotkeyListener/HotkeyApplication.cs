@@ -47,7 +47,7 @@ internal sealed class HotkeyApplication : IDisposable
 
         var openRouterHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         var openRouterApiKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY") ??
-                               "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";
+                               "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";
         var openRouterClient = new OpenRouterClient(openRouterHttpClient, openRouterApiKey,
             "deepseek/deepseek-r1-0528-qwen3-8b:free");
 

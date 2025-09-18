@@ -176,7 +176,7 @@ public partial class MainWindow : Window
         _currentTranslationText = payload.Text ?? string.Empty;
 
         var provider = string.IsNullOrWhiteSpace(payload.Provider) ? "unknown" : payload.Provider;
-        Console.WriteLine($"TranslationResult session={payload.SessionId} provider={provider}");
+        ConsoleLog.Highlight($"TranslationResult session={payload.SessionId} provider={provider}");
 
         // OverlayView.TranslationHeader.Text = $"Session: {payload.SessionId}";
         // OverlayView.TranslationHeader.Visibility = Visibility.Visible;

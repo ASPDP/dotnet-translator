@@ -22,18 +22,18 @@ internal sealed class ExternalProcessManager : IDisposable
 
         if (Process.GetProcessesByName(processName).Length > 0)
         {
-            Console.WriteLine("Mozhi server is already running.");
+            ConsoleLog.Info("Mozhi server is already running.");
             return;
         }
 
         try
         {
             Process.Start(processPath, "serve");
-            Console.WriteLine("Mozhi server started.");
+            ConsoleLog.Success("Mozhi server started.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Could not start Mozhi server: {ex.Message}");
+            ConsoleLog.Error($"Could not start Mozhi server: {ex.Message}");
         }
     }
 
@@ -50,7 +50,7 @@ internal sealed class ExternalProcessManager : IDisposable
                 var health = JsonSerializer.Deserialize<HealthResponse>(body);
                 if (health?.Status == "alive")
                 {
-                    Console.WriteLine("DeepL server is running.");
+                    ConsoleLog.Info("DeepL server is running.");
                     return;
                 }
             }
@@ -64,7 +64,7 @@ internal sealed class ExternalProcessManager : IDisposable
             // Timeout.
         }
 
-        Console.WriteLine("DeepL server not found, starting it...");
+        ConsoleLog.Warning("DeepL server not found, starting it...");
         try
         {
             var startInfo = new ProcessStartInfo
@@ -77,12 +77,12 @@ internal sealed class ExternalProcessManager : IDisposable
             };
 
             Process.Start(startInfo);
-            Console.WriteLine("DeepL server started.");
+            ConsoleLog.Success("DeepL server started.");
             await Task.Delay(3000).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Could not start DeepL server: {ex.Message}");
+            ConsoleLog.Error($"Could not start DeepL server: {ex.Message}");
         }
     }
 
@@ -93,18 +93,18 @@ internal sealed class ExternalProcessManager : IDisposable
 
         if (Process.GetProcessesByName(processName).Length > 0)
         {
-            Console.WriteLine("WpfWindower is already running.");
+            ConsoleLog.Info("WpfWindower is already running.");
             return;
         }
 
         try
         {
             Process.Start(processPath);
-            Console.WriteLine("WpfWindower started.");
+            ConsoleLog.Success("WpfWindower started.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Could not start WpfWindower: {ex.Message}");
+            ConsoleLog.Error($"Could not start WpfWindower: {ex.Message}");
         }
     }
 

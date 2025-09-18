@@ -177,7 +177,7 @@ internal sealed class TranslationWorkflow : IDisposable
 
     private async Task<VariantResult?> GetOpenRouterVariantAsync(string sessionId, string text, string from, string to)
     {
-        const string providerName = "OpenRouter";
+        const string providerName = "DeepSeek R1";
         LogTranslationStart(sessionId, providerName, text);
 
         try
@@ -200,7 +200,7 @@ internal sealed class TranslationWorkflow : IDisposable
 
     private async Task<VariantResult?> GetDeepseekChatVariantAsync(string sessionId, string text, string from, string to)
     {
-        const string providerName = "DeepSeek Chat";
+        const string providerName = "DeepSeek V3.1";
         LogTranslationStart(sessionId, providerName, text);
 
         try
@@ -228,12 +228,12 @@ internal sealed class TranslationWorkflow : IDisposable
 
     private static void LogTranslationStart(string sessionId, string provider, string text)
     {
-        Console.WriteLine($"TranslationStart session={sessionId} provider={provider} original: {text}");
+        ConsoleLog.Highlight($"TranslationStart session={sessionId} provider={provider} original: {text}");
     }
 
     private static void LogTranslationEnd(string sessionId, string provider, string text)
     {
-        Console.WriteLine($"TranslationEnd session={sessionId} provider={provider} translated: {text}");
+        ConsoleLog.Success($"TranslationEnd session={sessionId} provider={provider} translated: {text}");
     }
 
     private readonly record struct VariantResult(string Name, string Text);
