@@ -1,48 +1,61 @@
-﻿using System;
+using System;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Threading.Tasks;
-using System.Windows.Interop;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Threading;
 
 namespace WpfWindower;
+
 public static class WindowsServices
 {
-  const int WS_EX_TRANSPARENT = 0x00000020;
-  const int GWL_EXSTYLE = (-20);
+    private const int WS_EX_TRANSPARENT = 0x00000020;
+    private const int GWL_EXSTYLE = -20;
 
-  [DllImport("user32.dll")]
-  static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hwnd, int index);
 
-  [DllImport("user32.dll")]
-  static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
+    [DllImport("user32.dll")]
+    private static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
 
-  public static void SetWindowExTransparent(IntPtr hwnd)
-  {
-    var extendedStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-    SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle | WS_EX_TRANSPARENT);
-  }
+    public static void SetWindowExTransparent(IntPtr hwnd)
+    {
+        var extendedStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+        SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle | WS_EX_TRANSPARENT);
+    }
 }
-/// <summary>
-/// Interaction logic for MainWindow.xaml
-/// </summary>
+
 public partial class MainWindow : Window
 {
-    private DispatcherTimer _overlayTimer;
-protected override void OnSourceInitialized(EventArgs e)
-{
-  base.OnSourceInitialized(e);
-  var hwnd = new WindowInteropHelper(this).Handle;
-  WindowsServices.SetWindowExTransparent(hwnd);
-}
-    
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private readonly ObservableCollection<VariantDisplayItem> _variantItems = new();
+
+    private DispatcherTimer? _overlayTimer;
+    private string? _currentSessionId;
+    private string _currentTranslationText = string.Empty;
+
     public MainWindow()
     {
         InitializeComponent();
-        Task.Run(() => StartPipeServer());
+        OverlayView.CloseButton.Click += CloseOverlayButton_Click;
+        OverlayView.VariantsItems.ItemsSource = _variantItems;
+        Task.Run(StartPipeServer);
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        var hwnd = new WindowInteropHelper(this).Handle;
+        WindowsServices.SetWindowExTransparent(hwnd);
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -50,7 +63,7 @@ protected override void OnSourceInitialized(EventArgs e)
         OverlayPopup.PlacementTarget = this;
         OverlayPopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Center;
         OverlayPopup.MaxWidth = SystemParameters.PrimaryScreenWidth / 5;
-        OverlayBorder.MaxWidth = SystemParameters.PrimaryScreenWidth / 5;
+        OverlayView.OverlayBorder.MaxWidth = SystemParameters.PrimaryScreenWidth / 5;
     }
 
     private void ShowRhombus()
@@ -71,28 +84,18 @@ protected override void OnSourceInitialized(EventArgs e)
         {
             try
             {
-                using (var pipeServer = new NamedPipeServerStream("DotNetTranslatorPipe", PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.None))
-                {
-                    pipeServer.WaitForConnection();
-                    var reader = new StreamReader(pipeServer);
-                    var message = reader.ReadToEnd();
+                using var pipeServer = new NamedPipeServerStream("DotNetTranslatorPipe", PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.None);
+                pipeServer.WaitForConnection();
 
-                    if (!string.IsNullOrEmpty(message))
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            if (message == "SHOW_RHOMBUS")
-                            {
-                                ShowRhombus();
-                            }
-                            else
-                            {
-                                Debug.WriteLine($"Received message: {message}");
-                                ShowOverlay(message);
-                            }
-                        });
-                    }
+                using var reader = new StreamReader(pipeServer);
+                var message = reader.ReadToEnd();
+
+                if (string.IsNullOrEmpty(message))
+                {
+                    continue;
                 }
+
+                Dispatcher.Invoke(() => HandleMessage(message));
             }
             catch (IOException)
             {
@@ -101,43 +104,210 @@ protected override void OnSourceInitialized(EventArgs e)
         }
     }
 
-    private void ShowOverlay(string text)
+    private void HandleMessage(string message)
     {
-        var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-        OverlayItems.ItemsSource = lines;
-        OverlayPopup.IsOpen = true;
-
-        // Stop any previous overlay timer to avoid closing a new popup
-        if (_overlayTimer != null)
+        if (message == "SHOW_RHOMBUS")
         {
-            _overlayTimer.Stop();
-            _overlayTimer = null;
+            ShowRhombus();
+            return;
         }
 
-        var wordCount = text.Split(new[] { ' ', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
-        var readingTimeSeconds = (wordCount / 130.0) * 60.0;
-        var totalSeconds = readingTimeSeconds + 2;
+        if (message.StartsWith("SHOW_TRANSLATION:", StringComparison.Ordinal))
+        {
+            var payloadJson = message["SHOW_TRANSLATION:".Length..];
+            HandleTranslationPayload(payloadJson);
+            return;
+        }
+
+        if (message.StartsWith("SHOW_VARIANT:", StringComparison.Ordinal))
+        {
+            var payloadJson = message["SHOW_VARIANT:".Length..];
+            HandleVariantPayload(payloadJson);
+            return;
+        }
+
+        Debug.WriteLine($"Received unsupported message: {message}");
+    }
+
+    private void HandleTranslationPayload(string payloadJson)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<TranslationPayload>(payloadJson, SerializerOptions);
+            if (payload == null || string.IsNullOrWhiteSpace(payload.SessionId))
+            {
+                return;
+            }
+
+            ShowTranslation(payload);
+        }
+        catch (JsonException ex)
+        {
+            Debug.WriteLine($"Failed to parse translation payload: {ex.Message}");
+        }
+    }
+
+    private void HandleVariantPayload(string payloadJson)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<VariantPayload>(payloadJson, SerializerOptions);
+            if (payload == null || string.IsNullOrWhiteSpace(payload.SessionId))
+            {
+                return;
+            }
+
+            if (!string.Equals(payload.SessionId, _currentSessionId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            AddVariant(payload);
+        }
+        catch (JsonException ex)
+        {
+            Debug.WriteLine($"Failed to parse variant payload: {ex.Message}");
+        }
+    }
+
+    private void ShowTranslation(TranslationPayload payload)
+    {
+        _currentSessionId = payload.SessionId;
+        _currentTranslationText = payload.Text ?? string.Empty;
+
+        var provider = string.IsNullOrWhiteSpace(payload.Provider) ? "unknown" : payload.Provider;
+        Console.WriteLine($"TranslationResult session={payload.SessionId} provider={provider}");
+
+        // OverlayView.TranslationHeader.Text = $"Session: {payload.SessionId}";
+        // OverlayView.TranslationHeader.Visibility = Visibility.Visible;
+
+        OverlayView.OverlayItems.ItemsSource = SplitLines(_currentTranslationText);
+        _variantItems.Clear();
+        UpdateVariantVisibility();
+
+        OverlayPopup.IsOpen = true;
+        RestartOverlayTimer(CalculateDisplayDurationSeconds());
+    }
+
+    private void AddVariant(VariantPayload payload)
+    {
+        var lines = SplitLines(payload.Text);
+        if (lines.Length == 0)
+        {
+            return;
+        }
+
+        var header = string.IsNullOrWhiteSpace(payload.VariantName)
+            ? payload.SessionId
+            : $"{payload.VariantName} - {payload.SessionId}";
+
+        _variantItems.Add(new VariantDisplayItem(header, lines));
+        UpdateVariantVisibility();
+        RestartOverlayTimer(CalculateDisplayDurationSeconds());
+    }
+
+    private void UpdateVariantVisibility()
+    {
+        var hasVariants = _variantItems.Count > 0;
+        // OverlayView.VariantsHeader.Visibility = hasVariants ? Visibility.Visible : Visibility.Collapsed;
+        OverlayView.VariantsItems.Visibility = hasVariants ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void RestartOverlayTimer(double totalSeconds)
+    {
+        totalSeconds = Math.Max(4, totalSeconds);
+
+        if (_overlayTimer != null)
+        {
+            _overlayTimer.Tick -= OnOverlayTimerTick;
+            _overlayTimer.Stop();
+        }
 
         _overlayTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(totalSeconds) };
-        _overlayTimer.Tick += (sender, args) =>
-        {
-            OverlayPopup.IsOpen = false;
-            if (_overlayTimer != null)
-            {
-                _overlayTimer.Stop();
-                _overlayTimer = null;
-            }
-        };
+        _overlayTimer.Tick += OnOverlayTimerTick;
         _overlayTimer.Start();
+    }
+
+    private void OnOverlayTimerTick(object? sender, EventArgs e)
+    {
+        CloseOverlay();
     }
 
     private void CloseOverlayButton_Click(object sender, RoutedEventArgs e)
     {
+        CloseOverlay();
+    }
+
+    private void CloseOverlay()
+    {
         OverlayPopup.IsOpen = false;
+
         if (_overlayTimer != null)
         {
+            _overlayTimer.Tick -= OnOverlayTimerTick;
             _overlayTimer.Stop();
             _overlayTimer = null;
         }
+
+        // OverlayView.TranslationHeader.Visibility = Visibility.Collapsed;
+        // OverlayView.TranslationHeader.Text = string.Empty;
+        OverlayView.OverlayItems.ItemsSource = Array.Empty<string>();
+        _currentSessionId = null;
+        _currentTranslationText = string.Empty;
+
+        _variantItems.Clear();
+        UpdateVariantVisibility();
     }
+
+
+
+    private double CalculateDisplayDurationSeconds()
+    {
+        var totalText = _currentTranslationText;
+        foreach (var variant in _variantItems)
+        {
+            totalText += " " + string.Join(' ', variant.Lines);
+        }
+
+        var wordCount = CountWords(totalText);
+        var readingTimeSeconds = (wordCount / 130.0) * 60.0;
+        return readingTimeSeconds + 2;
+    }
+
+    private static string[] SplitLines(string? text)
+    {
+        return string.IsNullOrWhiteSpace(text)
+            ? Array.Empty<string>()
+            : text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static int CountWords(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return 0;
+        }
+
+        var separators = new[] { ' ', '\r', '\n', '\t' };
+        return text.Split(separators, StringSplitOptions.RemoveEmptyEntries).Length;
+    }
+
+    private sealed record class TranslationPayload(string SessionId, string Text, string Provider);
+
+    private sealed record class VariantPayload(string SessionId, string VariantName, string Text);
+
+    private sealed record VariantDisplayItem(string Header, string[] Lines);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,5 @@
+<Project>
+  <Target Name="KillProcessesBeforeBuild" BeforeTargets="BeforeBuild" Condition="'$(OS)' == 'Windows_NT'">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;try { $processes = 'mozhi','WpfWindower','HotkeyListener'; foreach ($name in $processes) { Stop-Process -Name $name -Force -ErrorAction SilentlyContinue } try { $connections = Get-NetTCPConnection -LocalPort 3001 -ErrorAction Stop } catch { $connections = @() } foreach ($connection in $connections) { Stop-Process -Id $connection.OwningProcess -Force -ErrorAction SilentlyContinue } } catch { Write-Host ('Pre-build cleanup skipped: ' + $_.Exception.Message) } ; exit 0&quot;" />
+  </Target>
+</Project>
