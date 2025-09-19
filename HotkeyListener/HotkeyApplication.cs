@@ -1,3 +1,4 @@
+using System.IO;
 using HotkeyListener.Interop;
 using HotkeyListener.Services;
 
@@ -46,8 +47,7 @@ internal sealed class HotkeyApplication : IDisposable
         var translationClient = new TranslationApiClient(translationHttpClient, translationSettings);
 
         var openRouterHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        var openRouterApiKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY") ??
-                               "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";
+        var openRouterApiKey = LoadOpenRouterApiKey();
         var openRouterClient = new OpenRouterClient(openRouterHttpClient, openRouterApiKey,
             "deepseek/deepseek-r1-0528-qwen3-8b:free");
 
@@ -94,4 +94,62 @@ internal sealed class HotkeyApplication : IDisposable
         _openRouterHttpClient.Dispose();
         _cts.Dispose();
     }
+
+    private static string? LoadOpenRouterApiKey()
+    {
+        const string keyFileName = "openrouter_api_key.txt";
+
+        var apiKeyFromFile = TryReadApiKeyFromFile(keyFileName);
+        if (!string.IsNullOrWhiteSpace(apiKeyFromFile))
+        {
+            return apiKeyFromFile;
+        }
+
+        return Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
+    }
+
+    private static string? TryReadApiKeyFromFile(string keyFileName)
+    {
+        var directory = AppContext.BaseDirectory;
+
+        while (!string.IsNullOrWhiteSpace(directory))
+        {
+            var candidate = Path.Combine(directory, keyFileName);
+            if (File.Exists(candidate))
+            {
+                try
+                {
+                    foreach (var line in File.ReadLines(candidate))
+                    {
+                        var trimmed = line.Trim();
+                        if (!string.IsNullOrWhiteSpace(trimmed))
+                        {
+                            return trimmed;
+                        }
+                    }
+                }
+                catch (IOException)
+                {
+                    return null;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return null;
+                }
+
+                return null;
+            }
+
+            var parent = Directory.GetParent(directory);
+            if (parent is null)
+            {
+                break;
+            }
+
+            directory = parent.FullName;
+        }
+
+        return null;
+    }
+
 }

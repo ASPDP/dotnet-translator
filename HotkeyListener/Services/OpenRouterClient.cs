@@ -28,7 +28,7 @@ internal sealed class OpenRouterClient
     {
         if (string.IsNullOrWhiteSpace(_apiKey))
         {
-            Debug.WriteLine("OpenRouter API key is missing. Set the OPENROUTER_API_KEY environment variable.");
+            Debug.WriteLine("OpenRouter API key is missing. Place it in openrouter_api_key.txt or set the OPENROUTER_API_KEY environment variable.");
             return null;
         }
 

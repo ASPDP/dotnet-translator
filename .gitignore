@@ -366,3 +366,5 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+# Local API keys
+openrouter_api_key.txt
