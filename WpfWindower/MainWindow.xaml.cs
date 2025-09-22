@@ -36,17 +36,27 @@ public partial class MainWindow : Window
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly TimeSpan OverlayProgressTickInterval = TimeSpan.FromMilliseconds(120);
+
     private readonly ObservableCollection<VariantDisplayItem> _variantItems = new();
 
     private DispatcherTimer? _overlayTimer;
     private DateTime? _overlayExpiresAtUtc;
     private string? _currentSessionId;
 
+    private DateTime? _overlayStartedAtUtc;
+    private TimeSpan _overlayTotalDuration = TimeSpan.Zero;
+
+    private int _overlayPauseRequests;
+    private TimeSpan? _overlayRemainingWhenPaused;
+    private TimeSpan _overlayElapsedBeforePause = TimeSpan.Zero;
+
     public MainWindow()
     {
         InitializeComponent();
         OverlayView.CloseButton.Click += CloseOverlayButton_Click;
         OverlayView.VariantsItems.ItemsSource = _variantItems;
+        OverlayView.VariantExplanationHoverChanged += OnVariantExplanationHoverChanged;
         Task.Run(StartPipeServer);
     }
 
@@ -162,6 +172,7 @@ public partial class MainWindow : Window
         OverlayView.OverlayItems.ItemsSource = Array.Empty<string>();
         _variantItems.Clear();
         UpdateVariantVisibility();
+        ResetOverlayPauseState();
 
         if (!UpsertVariantItem(provider, newText, isInitial: true))
         {
@@ -197,44 +208,173 @@ public partial class MainWindow : Window
         OverlayView.VariantsItems.Visibility = hasVariants ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private void OnVariantExplanationHoverChanged(object? sender, bool isHovering)
+    {
+        if (isHovering)
+        {
+            PauseOverlay();
+        }
+        else
+        {
+            ResumeOverlay();
+        }
+    }
+
+    private void ResetOverlayPauseState()
+    {
+        _overlayPauseRequests = 0;
+        _overlayRemainingWhenPaused = null;
+        _overlayElapsedBeforePause = TimeSpan.Zero;
+    }
+
+    private void PauseOverlay()
+    {
+        if (!_overlayExpiresAtUtc.HasValue || _overlayTimer is null)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var remaining = _overlayExpiresAtUtc.Value - now;
+        if (remaining <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        _overlayPauseRequests++;
+        if (_overlayPauseRequests > 1)
+        {
+            return;
+        }
+
+        UpdateOverlayProgress(now);
+
+        _overlayRemainingWhenPaused = remaining;
+        _overlayElapsedBeforePause = _overlayStartedAtUtc.HasValue
+            ? now - _overlayStartedAtUtc.Value
+            : TimeSpan.Zero;
+
+        _overlayTimer.Stop();
+    }
+
+    private void ResumeOverlay()
+    {
+        if (_overlayPauseRequests == 0)
+        {
+            return;
+        }
+
+        _overlayPauseRequests = Math.Max(0, _overlayPauseRequests - 1);
+        if (_overlayPauseRequests > 0)
+        {
+            return;
+        }
+
+        if (!_overlayExpiresAtUtc.HasValue || _overlayTimer is null || !_overlayRemainingWhenPaused.HasValue)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+
+        if (_overlayElapsedBeforePause > _overlayTotalDuration)
+        {
+            _overlayElapsedBeforePause = _overlayTotalDuration;
+        }
+
+        _overlayStartedAtUtc = now - _overlayElapsedBeforePause;
+        _overlayExpiresAtUtc = now + _overlayRemainingWhenPaused.Value;
+
+        UpdateOverlayProgress(now);
+        _overlayTimer.Start();
+
+        _overlayRemainingWhenPaused = null;
+        _overlayElapsedBeforePause = TimeSpan.Zero;
+    }
+
     private void RestartOverlayTimer(double totalSeconds, bool extendExisting = false)
     {
         totalSeconds = Math.Max(4, totalSeconds);
         var additional = TimeSpan.FromSeconds(totalSeconds);
         var now = DateTime.UtcNow;
 
-        if (extendExisting && _overlayExpiresAtUtc.HasValue && _overlayExpiresAtUtc.Value > now && OverlayPopup.IsOpen)
+        if (extendExisting && _overlayExpiresAtUtc.HasValue && _overlayStartedAtUtc.HasValue && _overlayExpiresAtUtc.Value > now && OverlayPopup.IsOpen)
         {
             _overlayExpiresAtUtc = _overlayExpiresAtUtc.Value + additional;
+            _overlayTotalDuration = _overlayExpiresAtUtc.Value - _overlayStartedAtUtc.Value;
         }
         else
         {
+            _overlayStartedAtUtc = now;
             _overlayExpiresAtUtc = now + additional;
+            _overlayTotalDuration = additional;
         }
 
-        var interval = _overlayExpiresAtUtc.Value - now;
-        if (interval < TimeSpan.FromMilliseconds(200))
+        if (_overlayTotalDuration <= TimeSpan.Zero)
         {
-            interval = TimeSpan.FromMilliseconds(200);
+            _overlayTotalDuration = TimeSpan.FromSeconds(1);
         }
 
         if (_overlayTimer is null)
         {
-            _overlayTimer = new DispatcherTimer();
+            _overlayTimer = new DispatcherTimer { Interval = OverlayProgressTickInterval };
             _overlayTimer.Tick += OnOverlayTimerTick;
         }
         else
         {
             _overlayTimer.Stop();
+            _overlayTimer.Interval = OverlayProgressTickInterval;
         }
 
-        _overlayTimer.Interval = interval;
-        _overlayTimer.Start();
+        OverlayView.ElapsedProgress.Visibility = Visibility.Visible;
+        UpdateOverlayProgress(now);
+
+        if (_overlayPauseRequests > 0)
+        {
+            if (_overlayExpiresAtUtc.HasValue)
+            {
+                var remaining = _overlayExpiresAtUtc.Value - now;
+                _overlayRemainingWhenPaused = remaining < TimeSpan.Zero ? TimeSpan.Zero : remaining;
+            }
+
+            _overlayElapsedBeforePause = _overlayStartedAtUtc.HasValue
+                ? now - _overlayStartedAtUtc.Value
+                : TimeSpan.Zero;
+
+            _overlayTimer.Stop();
+        }
+        else
+        {
+            _overlayTimer.Start();
+        }
     }
 
     private void OnOverlayTimerTick(object? sender, EventArgs e)
     {
-        CloseOverlay();
+        if (!_overlayExpiresAtUtc.HasValue)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        UpdateOverlayProgress(now);
+
+        if (now >= _overlayExpiresAtUtc.Value)
+        {
+            CloseOverlay();
+        }
+    }
+
+    private void UpdateOverlayProgress(DateTime now)
+    {
+        if (!_overlayStartedAtUtc.HasValue || _overlayTotalDuration <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var elapsed = now - _overlayStartedAtUtc.Value;
+        var ratio = Math.Clamp(elapsed.TotalMilliseconds / _overlayTotalDuration.TotalMilliseconds, 0.0, 1.0);
+        OverlayView.ElapsedProgress.Value = ratio;
     }
 
     private void CloseOverlayButton_Click(object sender, RoutedEventArgs e)
@@ -245,6 +385,9 @@ public partial class MainWindow : Window
     private void CloseOverlay()
     {
         OverlayPopup.IsOpen = false;
+        OverlayView.ElapsedProgress.Visibility = Visibility.Collapsed;
+        OverlayView.ElapsedProgress.Value = 0;
+        ResetOverlayPauseState();
 
         if (_overlayTimer != null)
         {
@@ -254,6 +397,8 @@ public partial class MainWindow : Window
         }
 
         _overlayExpiresAtUtc = null;
+        _overlayStartedAtUtc = null;
+        _overlayTotalDuration = TimeSpan.Zero;
 
         // OverlayView.TranslationHeader.Visibility = Visibility.Collapsed;
         // OverlayView.TranslationHeader.Text = string.Empty;
@@ -264,14 +409,12 @@ public partial class MainWindow : Window
         UpdateVariantVisibility();
     }
 
-
-
     private double CalculateDisplayDurationSeconds()
     {
         var wordCount = 0;
         foreach (var variant in _variantItems)
         {
-            wordCount += CountWords(variant.Text);
+            wordCount += CountWords(variant.DisplayText);
         }
 
         var readingTimeSeconds = (wordCount / 130.0) * 60.0;
@@ -281,7 +424,8 @@ public partial class MainWindow : Window
     private bool UpsertVariantItem(string? variantName, string? text, bool isInitial)
     {
         var normalizedText = text ?? string.Empty;
-        var lines = SplitLines(normalizedText);
+        var (displayText, explanation) = SplitTextAndExplanation(normalizedText);
+        var lines = SplitLines(displayText);
         if (lines.Length == 0)
         {
             return false;
@@ -289,7 +433,8 @@ public partial class MainWindow : Window
 
         var providerLabel = string.IsNullOrWhiteSpace(variantName) ? "unknown" : variantName.Trim();
         var header = providerLabel;
-        var newItem = new VariantDisplayItem(header, lines, normalizedText, isInitial);
+        var hasExplanation = !string.IsNullOrWhiteSpace(explanation);
+        var newItem = new VariantDisplayItem(header, lines, normalizedText, isInitial, hasExplanation, explanation);
 
         if (isInitial)
         {
@@ -349,6 +494,33 @@ public partial class MainWindow : Window
         return string.Equals(existingInitial.Text, newText, StringComparison.Ordinal);
     }
 
+    private static (string DisplayText, string? Explanation) SplitTextAndExplanation(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return (string.Empty, null);
+        }
+
+        var separatorIndex = text.IndexOf("---", StringComparison.Ordinal);
+        if (separatorIndex < 0)
+        {
+            return (text, null);
+        }
+
+        var displayPart = text[..separatorIndex].TrimEnd();
+        var explanationStart = separatorIndex + 3;
+        var explanationPart = explanationStart < text.Length
+            ? text[explanationStart..].Trim()
+            : string.Empty;
+
+        if (string.IsNullOrWhiteSpace(displayPart))
+        {
+            displayPart = string.Empty;
+        }
+
+        return (displayPart, string.IsNullOrWhiteSpace(explanationPart) ? null : explanationPart);
+    }
+
     private static string[] SplitLines(string? text)
     {
         return string.IsNullOrWhiteSpace(text)
@@ -369,5 +541,11 @@ public partial class MainWindow : Window
 
     private sealed record class VariantPayload(string SessionId, string VariantName, string Text);
 
-    private sealed record VariantDisplayItem(string Header, string[] Lines, string Text, bool IsInitial);
+    internal sealed record VariantDisplayItem(string Header, string[] Lines, string Text, bool IsInitial, bool HasExplanation, string? Explanation)
+    {
+        public string DisplayText => Lines.Length == 0
+            ? string.Empty
+            : string.Join(Environment.NewLine, Lines);
+    }
 }
+

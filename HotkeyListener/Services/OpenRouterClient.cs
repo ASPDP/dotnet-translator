@@ -36,8 +36,9 @@ internal sealed class OpenRouterClient
 
         var source = string.IsNullOrWhiteSpace(sourceLanguage) ? "auto" : sourceLanguage;
         var target = string.IsNullOrWhiteSpace(targetLanguage) ? "auto" : targetLanguage;
+        // add error expalanation only for eng source language
         var userPrompt =
-            $"You are a translation assistant. Respond with only the translated text while preserving line breaks.\n\nSource language: {source}\nTarget language: {target}\nIf sentence contain errors add --- and add error explanation in short compcat manner after ---\n\n{text}";
+            $"You are a translation assistant. Respond with only the translated text while preserving line breaks.\n\nSource language: {source}\nTarget language: {target}\nIf english sentence contain errors add ONE --- after translation, then and add english error explanation in short compact manner on russian\n\n{text}";
         if (sourceLanguage == "ru")
             userPrompt =
                 $"You are a translation assistant. Respond with only the translated text while preserving line breaks.\n\nSource language: {source}\nTarget language: {target}\n\n{text}";

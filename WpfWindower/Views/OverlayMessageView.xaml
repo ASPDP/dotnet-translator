@@ -16,6 +16,17 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
+            <ProgressBar x:Name="ElapsedProgressBarElement"
+                        Grid.Row="1"
+                        Height="6"
+                        Minimum="0"
+                        Maximum="1"
+                        Value="0"
+                        Margin="0,0,0,12"
+                        Foreground="#FF4CAF50"
+                        Background="#33000000"
+                        BorderBrush="Transparent"
+                        Visibility="Collapsed" />
             <ItemsControl x:Name="OverlayItemsControl" Grid.Row="2" Grid.RowSpan="2">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
@@ -34,7 +45,11 @@
             <ItemsControl x:Name="VariantsItemsControl" Grid.Row="4" Visibility="Collapsed" Grid.RowSpan="2">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <StackPanel Margin="0,4,0,0">
+                        <StackPanel Margin="0,4,0,0"
+                                    ToolTip="{Binding Explanation}"
+                                    ToolTipService.ShowDuration="60000"
+                                    MouseEnter="VariantItem_MouseEnter"
+                                    MouseLeave="VariantItem_MouseLeave">
                             <TextBlock Text="{Binding Header}"
                                        Foreground="#FFBBD5FF"
                                        FontWeight="Bold"
@@ -44,9 +59,19 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding}"
-                                                   Foreground="White"
                                                    FontSize="18"
-                                                   TextWrapping="Wrap" />
+                                                   TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="White" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DataContext.HasExplanation, RelativeSource={RelativeSource AncestorType={x:Type StackPanel}}}" Value="True">
+                                                            <Setter Property="Foreground" Value="#FFFF6B6B" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                                 <ItemsControl.ItemsPanel>
