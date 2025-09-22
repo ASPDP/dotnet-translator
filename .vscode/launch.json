@@ -8,7 +8,7 @@
             "preLaunchTask": "build-wpf",
             "program": "${workspaceFolder}/WpfWindower/bin/Debug/net9.0-windows/WpfWindower.exe",
             "cwd": "${workspaceFolder}/WpfWindower",
-            "console": "internalConsole"
+            "console": "integratedTerminal"
         },
         {
             "name": "Launch HotkeyListener",
@@ -17,7 +17,7 @@
             "preLaunchTask": "build-hotkey",
             "program": "${workspaceFolder}/HotkeyListener/bin/Debug/net9.0-windows/HotkeyListener.exe",
             "cwd": "${workspaceFolder}/HotkeyListener",
-            "console": "internalConsole"
+            "console": "integratedTerminal"
         }
     ],
     "compounds": [

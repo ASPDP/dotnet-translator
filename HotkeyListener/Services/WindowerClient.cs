@@ -19,9 +19,6 @@ internal sealed class WindowerClient
         _pipeName = pipeName;
     }
 
-    public void SendTranslation(string sessionId, string text, string provider) =>
-        SendStructuredMessage("SHOW_TRANSLATION", new TranslationPayload(sessionId, text, provider));
-
     public void ShowVariant(string sessionId, string variantName, string text) =>
         SendStructuredMessage("SHOW_VARIANT", new VariantPayload(sessionId, variantName, text));
 
@@ -55,8 +52,6 @@ internal sealed class WindowerClient
             ConsoleLog.Error($"Error sending message to windower: {ex.Message}");
         }
     }
-
-    private readonly record struct TranslationPayload(string SessionId, string Text, string Provider);
 
     private readonly record struct VariantPayload(string SessionId, string VariantName, string Text);
 }

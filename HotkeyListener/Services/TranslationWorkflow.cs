@@ -1,7 +1,8 @@
 using System;
-using System.Diagnostics;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 using HotkeyListener.Models;
 
 namespace HotkeyListener.Services;
@@ -88,30 +89,30 @@ internal sealed class TranslationWorkflow : IDisposable
             {
                 // Use cached result immediately
                 var cachedProvider = _lastTranslatedProvider ?? _translationClient.DefaultEngine;
-                Debug.WriteLine($"Using cached translation ({cachedProvider}): {_lastTranslatedText}");
-                _windowerClient.SendTranslation(sessionId, _lastTranslatedText!, cachedProvider);
+                ConsoleLog.Info($"Using cached translation ({cachedProvider}): {_lastTranslatedText}");
+                _windowerClient.ShowVariant(sessionId, cachedProvider, _lastTranslatedText!);
                 await _clipboard.SetTextAsync(_lastTranslatedText!, sessionToken).ConfigureAwait(false);
                 
                 // Still start variants for additional options
-                var (started, _) = StartVariantRequests(sessionId, originalText, from, to, sessionCts, notifyPrimaryResult: false);
+                var (started, _) = StartVariantRequests(sessionId, originalText, from, to, sessionCts, displayDefaultVariant: false);
                 variantsStarted = started;
             }
             else
             {
-                // Start variants and wait for primary result
-                var (started, primaryTask) = StartVariantRequests(sessionId, originalText, from, to, sessionCts, notifyPrimaryResult: true);
+                // Start variants and wait for the first completed response
+                var (started, variantTasks) = StartVariantRequests(sessionId, originalText, from, to, sessionCts, displayDefaultVariant: true);
                 variantsStarted = started;
                 
                 if (started)
                 {
-                    var primaryResult = await primaryTask.ConfigureAwait(false);
-                    if (primaryResult is not null)
+                    var firstResult = await WaitForFirstVariantAsync(variantTasks, sessionToken).ConfigureAwait(false);
+                    if (firstResult is not null)
                     {
                         _lastSourceText = originalText;
-                        _lastTranslatedText = primaryResult.Value.Text;
-                        _lastTranslatedProvider = primaryResult.Value.Name;
+                        _lastTranslatedText = firstResult.Value.Text;
+                        _lastTranslatedProvider = firstResult.Value.Name;
                         
-                        await _clipboard.SetTextAsync(primaryResult.Value.Text, sessionToken).ConfigureAwait(false);
+                        await _clipboard.SetTextAsync(firstResult.Value.Text, sessionToken).ConfigureAwait(false);
                     }
                 }
             }
@@ -119,15 +120,15 @@ internal sealed class TranslationWorkflow : IDisposable
         }
         catch (OperationCanceledException) when (sessionCts is not null && sessionCts.IsCancellationRequested)
         {
-            // Session was superseded.
+            ConsoleLog.Info("Translation session canceled (superseded by a new request).");
         }
         catch (OperationCanceledException)
         {
-            // Ignore cancellation triggered during shutdown.
+            ConsoleLog.Info("Translation session canceled during shutdown.");
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Hotkey workflow error: {ex.Message}");
+            ConsoleLog.Error($"Hotkey workflow error: {ex}");
         }
         finally
         {
@@ -144,63 +145,62 @@ internal sealed class TranslationWorkflow : IDisposable
         }
     }
 
-    private (bool Started, Task<VariantResult?> PrimaryTask) StartVariantRequests(
+    private (bool Started, Task<VariantResult?>[] VariantTasks) StartVariantRequests(
         string sessionId,
         string originalText,
         string from,
         string to,
         CancellationTokenSource sessionCts,
-        bool notifyPrimaryResult)
+        bool displayDefaultVariant)
     {
         var sessionToken = sessionCts.Token;
         if (sessionToken.IsCancellationRequested)
         {
-            return (false, Task.FromResult<VariantResult?>(null));
+            return (false, Array.Empty<Task<VariantResult?>>());
         }
 
-        var primaryTask = GetPrimaryVariantAsync(sessionId, originalText, from, to, sessionToken);
+        var defaultTask = GetDefaultVariantAsync(sessionId, originalText, from, to, sessionToken);
         var deeplTask = GetDeeplVariantAsync(sessionId, originalText, from, to, sessionToken);
         var openRouterTask = GetOpenRouterVariantAsync(sessionId, originalText, from, to, sessionToken);
         var deepseekChatTask = GetDeepseekChatVariantAsync(sessionId, originalText, from, to, sessionToken);
+
+        var variantTasks = new[] { defaultTask, deeplTask, openRouterTask, deepseekChatTask };
+
+        void AttachVariantNotifier(Task<VariantResult?> variantTask)
+        {
+            variantTask.ContinueWith(t =>
+            {
+                if (!t.IsCompletedSuccessfully || t.Result is null || sessionToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                _windowerClient.ShowVariant(sessionId, t.Result.Value.Name, t.Result.Value.Text);
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+
+        if (displayDefaultVariant)
+        {
+            AttachVariantNotifier(defaultTask);
+        }
+
+        AttachVariantNotifier(deeplTask);
+        AttachVariantNotifier(openRouterTask);
+        AttachVariantNotifier(deepseekChatTask);
 
         var pipelineTask = Task.Run(async () =>
         {
             try
             {
-                var results = await Task.WhenAll(primaryTask, deeplTask, openRouterTask, deepseekChatTask).ConfigureAwait(false);
-
-                if (notifyPrimaryResult)
-                {
-                    var primaryVariant = results[0];
-                    if (primaryVariant is not null)
-                    {
-                        _windowerClient.SendTranslation(sessionId, primaryVariant.Value.Text, primaryVariant.Value.Name);
-                    }
-                }
-
-                for (var i = 1; i < results.Length; i++)
-                {
-                    if (sessionToken.IsCancellationRequested)
-                    {
-                        break;
-                    }
-
-                    var variant = results[i];
-                    if (variant is null)
-                    {
-                        continue;
-                    }
-
-                    _windowerClient.ShowVariant(sessionId, variant.Value.Name, variant.Value.Text);
-                }
+                await Task.WhenAll(variantTasks).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                // Session canceled.
+                ConsoleLog.Info("Translation session canceled before all variants completed.");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Variant pipeline error: {ex.Message}");
+                ConsoleLog.Error($"Variant pipeline error: {ex}");
             }
         }, CancellationToken.None);
 
@@ -208,14 +208,50 @@ internal sealed class TranslationWorkflow : IDisposable
         {
             if (t.IsFaulted)
             {
-                Debug.WriteLine($"Variant pipeline faulted: {t.Exception?.GetBaseException().Message}");
+                var baseException = t.Exception?.GetBaseException();
+                ConsoleLog.Error($"Variant pipeline faulted: {baseException}");
             }
 
             TryResetActiveSession(sessionCts);
             sessionCts.Dispose();
         }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
-        return (true, primaryTask);
+        return (true, variantTasks);
+    }
+
+    private static async Task<VariantResult?> WaitForFirstVariantAsync(Task<VariantResult?>[] variantTasks, CancellationToken sessionToken)
+    {
+        if (variantTasks.Length == 0)
+        {
+            return null;
+        }
+
+        var remaining = new List<Task<VariantResult?>>(variantTasks);
+        while (remaining.Count > 0)
+        {
+            var completed = await Task.WhenAny(remaining).ConfigureAwait(false);
+            remaining.Remove(completed);
+
+            if (sessionToken.IsCancellationRequested)
+            {
+                return null;
+            }
+
+            try
+            {
+                var result = await completed.ConfigureAwait(false);
+                if (result is not null)
+                {
+                    return result;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Ignore cancellations propagated by individual variant tasks.
+            }
+        }
+
+        return null;
     }
 
     private async Task<VariantResult?> GetDeeplVariantAsync(string sessionId, string text, string from, string to, CancellationToken cancellationToken)
@@ -248,7 +284,7 @@ internal sealed class TranslationWorkflow : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Variant \"{providerName}\" error: {ex.Message}");
+            ConsoleLog.Error($"Variant \"{providerName}\" error: {ex}");
             return null;
         }
     }
@@ -266,6 +302,12 @@ internal sealed class TranslationWorkflow : IDisposable
                 return null;
             }
 
+            variantText = StripDeepseekReasoning(variantText);
+            if (string.IsNullOrWhiteSpace(variantText))
+            {
+                return null;
+            }
+
             LogTranslationEnd(sessionId, providerName, variantText);
             return new VariantResult(providerName, variantText);
         }
@@ -275,12 +317,12 @@ internal sealed class TranslationWorkflow : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Variant \"{providerName}\" error: {ex.Message}");
+            ConsoleLog.Error($"Variant \"{providerName}\" error: {ex}");
             return null;
         }
     }
 
-    private async Task<VariantResult?> GetPrimaryVariantAsync(string sessionId, string text, string from, string to, CancellationToken cancellationToken)
+    private async Task<VariantResult?> GetDefaultVariantAsync(string sessionId, string text, string from, string to, CancellationToken cancellationToken)
     {
         var providerName = _translationClient.DefaultEngine;
         LogTranslationStart(sessionId, providerName, text);
@@ -311,7 +353,7 @@ internal sealed class TranslationWorkflow : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Variant \"{providerName}\" error: {ex.Message}");
+            ConsoleLog.Error($"Variant \"{providerName}\" error: {ex}");
             return null;
         }
     }
@@ -329,6 +371,12 @@ internal sealed class TranslationWorkflow : IDisposable
                 return null;
             }
 
+            variantText = StripDeepseekReasoning(variantText);
+            if (string.IsNullOrWhiteSpace(variantText))
+            {
+                return null;
+            }
+
             LogTranslationEnd(sessionId, providerName, variantText);
             return new VariantResult(providerName, variantText);
         }
@@ -338,9 +386,20 @@ internal sealed class TranslationWorkflow : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Variant \"{providerName}\" error: {ex.Message}");
+            ConsoleLog.Error($"Variant \"{providerName}\" error: {ex}");
             return null;
         }
+    }
+
+    private static string StripDeepseekReasoning(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var cleaned = Regex.Replace(text, "<think>.*?</think>", string.Empty, RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        return cleaned.Trim();
     }
 
     public void Dispose()
@@ -414,3 +473,5 @@ internal sealed class TranslationWorkflow : IDisposable
 
     private readonly record struct VariantResult(string Name, string Text);
 }
+
+

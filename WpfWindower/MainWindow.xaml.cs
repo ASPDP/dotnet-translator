@@ -1,6 +1,5 @@
 using System;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
@@ -112,13 +111,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (message.StartsWith("SHOW_TRANSLATION:", StringComparison.Ordinal))
-        {
-            var payloadJson = message["SHOW_TRANSLATION:".Length..];
-            HandleTranslationPayload(payloadJson);
-            return;
-        }
-
         if (message.StartsWith("SHOW_VARIANT:", StringComparison.Ordinal))
         {
             var payloadJson = message["SHOW_VARIANT:".Length..];
@@ -126,25 +118,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        Debug.WriteLine($"Received unsupported message: {message}");
-    }
-
-    private void HandleTranslationPayload(string payloadJson)
-    {
-        try
-        {
-            var payload = JsonSerializer.Deserialize<TranslationPayload>(payloadJson, SerializerOptions);
-            if (payload == null || string.IsNullOrWhiteSpace(payload.SessionId))
-            {
-                return;
-            }
-
-            ShowTranslation(payload);
-        }
-        catch (JsonException ex)
-        {
-            Debug.WriteLine($"Failed to parse translation payload: {ex.Message}");
-        }
+        ConsoleLog.Warning($"Received unsupported message: {message}");
     }
 
     private void HandleVariantPayload(string payloadJson)
@@ -157,8 +131,11 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (!string.Equals(payload.SessionId, _currentSessionId, StringComparison.Ordinal))
+            var isNewSession = !string.Equals(payload.SessionId, _currentSessionId, StringComparison.Ordinal);
+
+            if (isNewSession)
             {
+                StartVariantSession(payload);
                 return;
             }
 
@@ -166,25 +143,27 @@ public partial class MainWindow : Window
         }
         catch (JsonException ex)
         {
-            Debug.WriteLine($"Failed to parse variant payload: {ex.Message}");
+            ConsoleLog.Error($"Failed to parse variant payload: {ex}");
         }
     }
 
-    private void ShowTranslation(TranslationPayload payload)
+
+
+    private void StartVariantSession(VariantPayload payload)
     {
         var newText = payload.Text ?? string.Empty;
-        var provider = string.IsNullOrWhiteSpace(payload.Provider) ? "unknown" : payload.Provider;
-        var shouldExtend = ShouldExtendForPrimary(newText);
+        var provider = string.IsNullOrWhiteSpace(payload.VariantName) ? "unknown" : payload.VariantName;
+        var shouldExtend = ShouldExtendForInitialVariant(newText);
 
         _currentSessionId = payload.SessionId;
 
-        ConsoleLog.Highlight($"TranslationResult session={payload.SessionId} provider={provider}");
+        ConsoleLog.Highlight($"VariantSessionStart session={payload.SessionId} provider={provider}");
 
         OverlayView.OverlayItems.ItemsSource = Array.Empty<string>();
         _variantItems.Clear();
         UpdateVariantVisibility();
 
-        if (!UpsertVariantItem(provider, newText, isPrimary: true))
+        if (!UpsertVariantItem(provider, newText, isInitial: true))
         {
             return;
         }
@@ -193,6 +172,8 @@ public partial class MainWindow : Window
         RestartOverlayTimer(CalculateDisplayDurationSeconds(), shouldExtend);
     }
 
+
+
     private void AddVariant(VariantPayload payload)
     {
         if (!string.Equals(payload.SessionId, _currentSessionId, StringComparison.Ordinal))
@@ -200,7 +181,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!UpsertVariantItem(payload.VariantName, payload.Text, isPrimary: false))
+        if (!UpsertVariantItem(payload.VariantName, payload.Text, isInitial: false))
         {
             return;
         }
@@ -297,7 +278,7 @@ public partial class MainWindow : Window
         return readingTimeSeconds + 2;
     }
 
-    private bool UpsertVariantItem(string? variantName, string? text, bool isPrimary)
+    private bool UpsertVariantItem(string? variantName, string? text, bool isInitial)
     {
         var normalizedText = text ?? string.Empty;
         var lines = SplitLines(normalizedText);
@@ -307,12 +288,12 @@ public partial class MainWindow : Window
         }
 
         var providerLabel = string.IsNullOrWhiteSpace(variantName) ? "unknown" : variantName.Trim();
-        var header = isPrimary ? $"{providerLabel} (primary)" : providerLabel;
-        var newItem = new VariantDisplayItem(header, lines, normalizedText, isPrimary);
+        var header = providerLabel;
+        var newItem = new VariantDisplayItem(header, lines, normalizedText, isInitial);
 
-        if (isPrimary)
+        if (isInitial)
         {
-            if (_variantItems.Count > 0 && _variantItems[0].IsPrimary)
+            if (_variantItems.Count > 0 && _variantItems[0].IsInitial)
             {
                 _variantItems[0] = newItem;
             }
@@ -323,7 +304,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            var existingIndex = FindVariantIndex(header);
+            var existingIndex = FindVariantIndex(header, isInitial: false);
             if (existingIndex >= 0)
             {
                 _variantItems[existingIndex] = newItem;
@@ -338,11 +319,12 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private int FindVariantIndex(string header)
+    private int FindVariantIndex(string header, bool isInitial)
     {
         for (var i = 0; i < _variantItems.Count; i++)
         {
-            if (string.Equals(_variantItems[i].Header, header, StringComparison.Ordinal))
+            var candidate = _variantItems[i];
+            if (candidate.IsInitial == isInitial && string.Equals(candidate.Header, header, StringComparison.Ordinal))
             {
                 return i;
             }
@@ -351,20 +333,20 @@ public partial class MainWindow : Window
         return -1;
     }
 
-    private bool ShouldExtendForPrimary(string newText)
+    private bool ShouldExtendForInitialVariant(string newText)
     {
         if (!OverlayPopup.IsOpen || _variantItems.Count != 1)
         {
             return false;
         }
 
-        var existingPrimary = _variantItems[0];
-        if (!existingPrimary.IsPrimary)
+        var existingInitial = _variantItems[0];
+        if (!existingInitial.IsInitial)
         {
             return false;
         }
 
-        return string.Equals(existingPrimary.Text, newText, StringComparison.Ordinal);
+        return string.Equals(existingInitial.Text, newText, StringComparison.Ordinal);
     }
 
     private static string[] SplitLines(string? text)
@@ -385,22 +367,7 @@ public partial class MainWindow : Window
         return text.Split(separators, StringSplitOptions.RemoveEmptyEntries).Length;
     }
 
-    private sealed record class TranslationPayload(string SessionId, string Text, string Provider);
-
     private sealed record class VariantPayload(string SessionId, string VariantName, string Text);
 
-    private sealed record VariantDisplayItem(string Header, string[] Lines, string Text, bool IsPrimary);
+    private sealed record VariantDisplayItem(string Header, string[] Lines, string Text, bool IsInitial);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

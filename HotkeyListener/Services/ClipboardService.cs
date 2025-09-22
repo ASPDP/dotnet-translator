@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace HotkeyListener.Services;
 
 internal sealed class ClipboardService
@@ -28,7 +26,7 @@ internal sealed class ClipboardService
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Error reading clipboard text: {ex.Message}");
+                ConsoleLog.Error($"Error reading clipboard text: {ex}");
             }
         });
         thread.SetApartmentState(ApartmentState.STA);
@@ -47,7 +45,7 @@ internal sealed class ClipboardService
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Error writing clipboard text: {ex.Message}");
+                ConsoleLog.Error($"Error writing clipboard text: {ex}");
             }
         });
         thread.SetApartmentState(ApartmentState.STA);

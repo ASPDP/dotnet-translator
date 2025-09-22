@@ -1,9 +1,11 @@
+using System.Collections.Generic;
 using System.Text.Json;
+using System.Threading;
 using HotkeyListener.Models;
 
 namespace HotkeyListener.Services;
 
-internal sealed record TranslationApiSettings(string DefaultEngine, string FallbackEngine, int PrimaryPort, int DeepLPort);
+internal sealed record TranslationApiSettings(string DefaultEngine, string FallbackEngine, int DefaultPort, int DeepLPort);
 
 internal readonly record struct TranslationResult(string Text, string Provider);
 
@@ -28,34 +30,69 @@ internal sealed class TranslationApiClient
             : request.Engine!;
         request.Engine = requestedEngine;
 
-        var primaryResponse = await SendRequestAsync(request, requestedEngine, cancellationToken).ConfigureAwait(false);
-        var primaryResult = CreateResult(primaryResponse, requestedEngine);
-        if (primaryResult is not null)
-        {
-            return primaryResult;
-        }
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-        if (!allowFallback)
+        var requestTasks = new List<(Task<TranslationResponse?> Task, string Engine)>
         {
-            return null;
-        }
-
-        if (string.Equals(requestedEngine, _settings.FallbackEngine, StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        ConsoleLog.Warning("Retrying with yandex engine.");
-        var fallbackRequest = new TranslationRequest
-        {
-            Text = request.Text,
-            From = request.From,
-            To = request.To,
-            Engine = _settings.FallbackEngine
+            (SendRequestAsync(request, requestedEngine, linkedCts.Token), requestedEngine)
         };
 
-        var fallbackResponse = await SendRequestAsync(fallbackRequest, _settings.FallbackEngine, cancellationToken).ConfigureAwait(false);
-        return CreateResult(fallbackResponse, _settings.FallbackEngine);
+        if (allowFallback && !string.Equals(requestedEngine, _settings.FallbackEngine, StringComparison.OrdinalIgnoreCase))
+        {
+            var fallbackRequest = new TranslationRequest
+            {
+                Text = request.Text,
+                From = request.From,
+                To = request.To,
+                Engine = _settings.FallbackEngine
+            };
+
+            requestTasks.Add((SendRequestAsync(fallbackRequest, _settings.FallbackEngine, linkedCts.Token), _settings.FallbackEngine));
+        }
+
+        while (requestTasks.Count > 0)
+        {
+            var tasksSnapshot = new Task<TranslationResponse?>[requestTasks.Count];
+            for (var i = 0; i < requestTasks.Count; i++)
+            {
+                tasksSnapshot[i] = requestTasks[i].Task;
+            }
+
+            var completedTask = await Task.WhenAny(tasksSnapshot).ConfigureAwait(false);
+
+            var completedIndex = -1;
+            for (var i = 0; i < requestTasks.Count; i++)
+            {
+                if (ReferenceEquals(requestTasks[i].Task, completedTask))
+                {
+                    completedIndex = i;
+                    break;
+                }
+            }
+
+            if (completedIndex < 0)
+            {
+                continue;
+            }
+
+            var (task, engineName) = requestTasks[completedIndex];
+            requestTasks.RemoveAt(completedIndex);
+
+            var response = await task.ConfigureAwait(false);
+            var result = CreateResult(response, engineName);
+            if (result is not null)
+            {
+                if (!string.Equals(engineName, requestedEngine, StringComparison.OrdinalIgnoreCase))
+                {
+                    ConsoleLog.Warning("Returning response from fallback engine.");
+                }
+
+                linkedCts.Cancel();
+                return result;
+            }
+        }
+
+        return null;
     }
 
     private static TranslationResult? CreateResult(TranslationResponse? response, string requestedEngine)
@@ -95,6 +132,7 @@ internal sealed class TranslationApiClient
         }
         catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            ConsoleLog.Info($"Translation API request canceled for engine {engine}.");
         }
         catch (HttpRequestException ex)
         {
@@ -115,6 +153,7 @@ internal sealed class TranslationApiClient
             return (_settings.DeepLPort, "google");
         }
 
-        return (_settings.PrimaryPort, engine);
+        return (_settings.DefaultPort, engine);
     }
 }
+
