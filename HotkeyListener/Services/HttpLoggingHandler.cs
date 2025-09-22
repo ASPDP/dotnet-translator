@@ -106,11 +106,6 @@ internal sealed class HttpLoggingHandler : DelegatingHandler
             clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        foreach (var header in source.TrailingHeaders)
-        {
-            clone.TrailingHeaders.TryAddWithoutValidation(header.Key, header.Value);
-        }
-
         return clone;
     }
 
@@ -159,9 +154,7 @@ internal sealed class HttpLoggingHandler : DelegatingHandler
                 hasAny = true;
             }
 
-            var value = SensitiveHeaders.Contains(header.Key)
-                ? "***redacted***"
-                : string.Join(", ", header.Value);
+            var value = string.Join(", ", header.Value);
 
             builder.AppendLine($"  {header.Key}: {value}");
         }

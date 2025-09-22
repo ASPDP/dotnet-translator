@@ -29,13 +29,18 @@ internal sealed class OpenRouterClient
     {
         if (string.IsNullOrWhiteSpace(_apiKey))
         {
-            ConsoleLog.Warning("OpenRouter API key is missing. Place it in openrouter_api_key.txt or set the OPENROUTER_API_KEY environment variable.");
+            ConsoleLog.Warning(
+                "OpenRouter API key is missing. Place it in openrouter_api_key.txt or set the OPENROUTER_API_KEY environment variable.");
             return null;
         }
 
         var source = string.IsNullOrWhiteSpace(sourceLanguage) ? "auto" : sourceLanguage;
         var target = string.IsNullOrWhiteSpace(targetLanguage) ? "auto" : targetLanguage;
-        var userPrompt = $"You are a translation assistant. Respond with only the translated text while preserving line breaks.\n\nSource language: {source}\nTarget language: {target}\n\n{text}";
+        var userPrompt =
+            $"You are a translation assistant. Respond with only the translated text while preserving line breaks.\n\nSource language: {source}\nTarget language: {target}\nIf sentence contain errors add --- and add error explanation in short compcat manner after ---\n\n{text}";
+        if (sourceLanguage == "ru")
+            userPrompt =
+                $"You are a translation assistant. Respond with only the translated text while preserving line breaks.\n\nSource language: {source}\nTarget language: {target}\n\n{text}";
 
         var modelToUse = string.IsNullOrWhiteSpace(modelOverride) ? _defaultModel : modelOverride;
         var payload = new
@@ -71,7 +76,8 @@ internal sealed class OpenRouterClient
 
             if (!response.IsSuccessStatusCode)
             {
-                ConsoleLog.Error($"OpenRouter request failed ({(int)response.StatusCode}): {response.ReasonPhrase}. Body: {responseBody}");
+                ConsoleLog.Error(
+                    $"OpenRouter request failed ({(int)response.StatusCode}): {response.ReasonPhrase}. Body: {responseBody}");
                 return null;
             }
 
@@ -168,9 +174,7 @@ internal sealed class OpenRouterClient
     {
         foreach (var header in headers)
         {
-            var value = header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
-                ? "<redacted>"
-                : string.Join(", ", header.Value);
+            var value = string.Join(", ", header.Value);
             builder.AppendLine($"{header.Key}: {value}");
         }
     }
