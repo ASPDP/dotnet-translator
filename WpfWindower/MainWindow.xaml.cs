@@ -40,8 +40,8 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<VariantDisplayItem> _variantItems = new();
 
     private DispatcherTimer? _overlayTimer;
+    private DateTime? _overlayExpiresAtUtc;
     private string? _currentSessionId;
-    private string _currentTranslationText = string.Empty;
 
     public MainWindow()
     {
@@ -172,37 +172,40 @@ public partial class MainWindow : Window
 
     private void ShowTranslation(TranslationPayload payload)
     {
-        _currentSessionId = payload.SessionId;
-        _currentTranslationText = payload.Text ?? string.Empty;
-
+        var newText = payload.Text ?? string.Empty;
         var provider = string.IsNullOrWhiteSpace(payload.Provider) ? "unknown" : payload.Provider;
+        var shouldExtend = ShouldExtendForPrimary(newText);
+
+        _currentSessionId = payload.SessionId;
+
         ConsoleLog.Highlight($"TranslationResult session={payload.SessionId} provider={provider}");
 
-        // OverlayView.TranslationHeader.Text = $"Session: {payload.SessionId}";
-        // OverlayView.TranslationHeader.Visibility = Visibility.Visible;
-
-        OverlayView.OverlayItems.ItemsSource = SplitLines(_currentTranslationText);
+        OverlayView.OverlayItems.ItemsSource = Array.Empty<string>();
         _variantItems.Clear();
         UpdateVariantVisibility();
 
-        OverlayPopup.IsOpen = true;
-        RestartOverlayTimer(CalculateDisplayDurationSeconds());
-    }
-
-    private void AddVariant(VariantPayload payload)
-    {
-        var lines = SplitLines(payload.Text);
-        if (lines.Length == 0)
+        if (!UpsertVariantItem(provider, newText, isPrimary: true))
         {
             return;
         }
 
-        var header = string.IsNullOrWhiteSpace(payload.VariantName)
-            ? payload.SessionId
-            : $"{payload.VariantName} - {payload.SessionId}";
+        OverlayPopup.IsOpen = true;
+        RestartOverlayTimer(CalculateDisplayDurationSeconds(), shouldExtend);
+    }
 
-        _variantItems.Add(new VariantDisplayItem(header, lines));
-        UpdateVariantVisibility();
+    private void AddVariant(VariantPayload payload)
+    {
+        if (!string.Equals(payload.SessionId, _currentSessionId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (!UpsertVariantItem(payload.VariantName, payload.Text, isPrimary: false))
+        {
+            return;
+        }
+
+        OverlayPopup.IsOpen = true;
         RestartOverlayTimer(CalculateDisplayDurationSeconds());
     }
 
@@ -213,18 +216,38 @@ public partial class MainWindow : Window
         OverlayView.VariantsItems.Visibility = hasVariants ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void RestartOverlayTimer(double totalSeconds)
+    private void RestartOverlayTimer(double totalSeconds, bool extendExisting = false)
     {
         totalSeconds = Math.Max(4, totalSeconds);
+        var additional = TimeSpan.FromSeconds(totalSeconds);
+        var now = DateTime.UtcNow;
 
-        if (_overlayTimer != null)
+        if (extendExisting && _overlayExpiresAtUtc.HasValue && _overlayExpiresAtUtc.Value > now && OverlayPopup.IsOpen)
         {
-            _overlayTimer.Tick -= OnOverlayTimerTick;
+            _overlayExpiresAtUtc = _overlayExpiresAtUtc.Value + additional;
+        }
+        else
+        {
+            _overlayExpiresAtUtc = now + additional;
+        }
+
+        var interval = _overlayExpiresAtUtc.Value - now;
+        if (interval < TimeSpan.FromMilliseconds(200))
+        {
+            interval = TimeSpan.FromMilliseconds(200);
+        }
+
+        if (_overlayTimer is null)
+        {
+            _overlayTimer = new DispatcherTimer();
+            _overlayTimer.Tick += OnOverlayTimerTick;
+        }
+        else
+        {
             _overlayTimer.Stop();
         }
 
-        _overlayTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(totalSeconds) };
-        _overlayTimer.Tick += OnOverlayTimerTick;
+        _overlayTimer.Interval = interval;
         _overlayTimer.Start();
     }
 
@@ -249,11 +272,12 @@ public partial class MainWindow : Window
             _overlayTimer = null;
         }
 
+        _overlayExpiresAtUtc = null;
+
         // OverlayView.TranslationHeader.Visibility = Visibility.Collapsed;
         // OverlayView.TranslationHeader.Text = string.Empty;
         OverlayView.OverlayItems.ItemsSource = Array.Empty<string>();
         _currentSessionId = null;
-        _currentTranslationText = string.Empty;
 
         _variantItems.Clear();
         UpdateVariantVisibility();
@@ -263,15 +287,84 @@ public partial class MainWindow : Window
 
     private double CalculateDisplayDurationSeconds()
     {
-        var totalText = _currentTranslationText;
+        var wordCount = 0;
         foreach (var variant in _variantItems)
         {
-            totalText += " " + string.Join(' ', variant.Lines);
+            wordCount += CountWords(variant.Text);
         }
 
-        var wordCount = CountWords(totalText);
         var readingTimeSeconds = (wordCount / 130.0) * 60.0;
         return readingTimeSeconds + 2;
+    }
+
+    private bool UpsertVariantItem(string? variantName, string? text, bool isPrimary)
+    {
+        var normalizedText = text ?? string.Empty;
+        var lines = SplitLines(normalizedText);
+        if (lines.Length == 0)
+        {
+            return false;
+        }
+
+        var providerLabel = string.IsNullOrWhiteSpace(variantName) ? "unknown" : variantName.Trim();
+        var header = isPrimary ? $"{providerLabel} (primary)" : providerLabel;
+        var newItem = new VariantDisplayItem(header, lines, normalizedText, isPrimary);
+
+        if (isPrimary)
+        {
+            if (_variantItems.Count > 0 && _variantItems[0].IsPrimary)
+            {
+                _variantItems[0] = newItem;
+            }
+            else
+            {
+                _variantItems.Insert(0, newItem);
+            }
+        }
+        else
+        {
+            var existingIndex = FindVariantIndex(header);
+            if (existingIndex >= 0)
+            {
+                _variantItems[existingIndex] = newItem;
+            }
+            else
+            {
+                _variantItems.Add(newItem);
+            }
+        }
+
+        UpdateVariantVisibility();
+        return true;
+    }
+
+    private int FindVariantIndex(string header)
+    {
+        for (var i = 0; i < _variantItems.Count; i++)
+        {
+            if (string.Equals(_variantItems[i].Header, header, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private bool ShouldExtendForPrimary(string newText)
+    {
+        if (!OverlayPopup.IsOpen || _variantItems.Count != 1)
+        {
+            return false;
+        }
+
+        var existingPrimary = _variantItems[0];
+        if (!existingPrimary.IsPrimary)
+        {
+            return false;
+        }
+
+        return string.Equals(existingPrimary.Text, newText, StringComparison.Ordinal);
     }
 
     private static string[] SplitLines(string? text)
@@ -296,7 +389,7 @@ public partial class MainWindow : Window
 
     private sealed record class VariantPayload(string SessionId, string VariantName, string Text);
 
-    private sealed record VariantDisplayItem(string Header, string[] Lines);
+    private sealed record VariantDisplayItem(string Header, string[] Lines, string Text, bool IsPrimary);
 }
 
 
