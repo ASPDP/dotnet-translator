@@ -291,7 +291,7 @@ internal sealed class TranslationWorkflow : IDisposable
 
     private async Task<VariantResult?> GetOpenRouterVariantAsync(string sessionId, string text, string from, string to, CancellationToken cancellationToken)
     {
-        const string providerName = "DeepSeek R1";
+        const string providerName = "x-ai/grok-4-fast:free";
         LogTranslationStart(sessionId, providerName, text);
 
         try

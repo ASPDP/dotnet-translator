@@ -49,7 +49,7 @@ internal sealed class HotkeyApplication : IDisposable
         var openRouterHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         var openRouterApiKey = LoadOpenRouterApiKey();
         var openRouterClient = new OpenRouterClient(openRouterHttpClient, openRouterApiKey,
-            "deepseek/deepseek-r1-0528-qwen3-8b:free");
+            "x-ai/grok-4-fast:free");
 
         var workflow = new TranslationWorkflow(
             selectionCapture,
