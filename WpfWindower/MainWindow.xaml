@@ -11,6 +11,18 @@
         Width="800"
         Loaded="Window_Loaded">
     <Grid>
+        <Button x:Name="RestartServerButton"
+                Content="Restart Server"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="10"
+                Padding="10,5"
+                Background="#66000000"
+                Foreground="White"
+                BorderBrush="#FFBBD5FF"
+                FontWeight="Bold"
+                Click="RestartServerButton_Click" />
+
         <Popup x:Name="RhombusPopup"
                Placement="Center"
                AllowsTransparency="True">

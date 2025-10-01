@@ -189,8 +189,15 @@ internal sealed class TranslationWorkflow : IDisposable
 
             variantTask.ContinueWith(t =>
             {
-                if (!t.IsCompletedSuccessfully || t.Result is null || sessionToken.IsCancellationRequested)
+                if (!t.IsCompletedSuccessfully || t.Result is null)
                 {
+                    return;
+                }
+
+                // Check cancellation before sending to windower
+                if (sessionToken.IsCancellationRequested)
+                {
+                    ConsoleLog.Info($"Session {sessionId} cancelled, not sending {t.Result.Value.Name} result to windower");
                     return;
                 }
 

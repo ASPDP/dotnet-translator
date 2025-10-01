@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -54,6 +55,9 @@ public partial class MainWindow : Window
 
     private DispatcherTimer? _clipboardTimer;
 
+    private string? _serverProcessPath;
+    private string? _serverWorkingDirectory;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -61,8 +65,8 @@ public partial class MainWindow : Window
         OverlayView.VariantsItems.ItemsSource = _variantItems;
         OverlayView.VariantExplanationHoverChanged += OnVariantExplanationHoverChanged;
         ClipboardOverlayView.CloseButton.Click += CloseClipboardOverlayButton_Click;
-        KeyDown += MainWindow_KeyDown;
         Task.Run(StartPipeServer);
+        Task.Run(TrackServerProcess);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -145,12 +149,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (message == "RESTART_SERVER")
-        {
-            RestartServer();
-            return;
-        }
-
         ConsoleLog.Warning($"Received unsupported message: {message}");
     }
 
@@ -212,6 +210,7 @@ public partial class MainWindow : Window
     {
         if (!string.Equals(payload.SessionId, _currentSessionId, StringComparison.Ordinal))
         {
+            ConsoleLog.Info($"Ignoring variant from old session: {payload.SessionId} (current: {_currentSessionId})");
             return;
         }
 
@@ -575,7 +574,11 @@ public partial class MainWindow : Window
         if (_clipboardTimer == null)
         {
             _clipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-            _clipboardTimer.Tick += ClipboardTimer_Tick;
+            _clipboardTimer.Tick += (s, e) =>
+            {
+                _clipboardTimer.Stop();
+                CloseClipboardOverlay();
+            };
         }
         else
         {
@@ -585,80 +588,230 @@ public partial class MainWindow : Window
         _clipboardTimer.Start();
     }
 
-    private void ClipboardTimer_Tick(object? sender, EventArgs e)
-    {
-        _clipboardTimer?.Stop();
-        CloseClipboardOverlay();
-    }
-
     private void CloseClipboardOverlayButton_Click(object sender, RoutedEventArgs e)
     {
-        _clipboardTimer?.Stop();
         CloseClipboardOverlay();
     }
 
     private void CloseClipboardOverlay()
     {
+        _clipboardTimer?.Stop();
         ClipboardOverlayPopup.IsOpen = false;
         ClipboardOverlayView.MessageText.Text = string.Empty;
     }
 
-    private void MainWindow_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    private async Task TrackServerProcess()
     {
-        // Ctrl+Shift+R to restart server
-        if (e.Key == System.Windows.Input.Key.R &&
-            (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) == System.Windows.Input.ModifierKeys.Control &&
-            (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Shift) == System.Windows.Input.ModifierKeys.Shift)
-        {
-            RestartServer();
-            e.Handled = true;
-        }
-    }
+        await Task.Delay(1000); // Wait for server to connect
 
-    private void RestartServer()
-    {
         try
         {
-            ConsoleLog.Info("Restarting HotkeyListener server...");
-
-            // Find HotkeyListener process
-            var processes = Process.GetProcessesByName("HotkeyListener");
-            if (processes.Length == 0)
+            var hotkeyProcesses = Process.GetProcessesByName("HotkeyListener");
+            if (hotkeyProcesses.Length > 0)
             {
-                ConsoleLog.Warning("HotkeyListener process not found.");
-                return;
+                var process = hotkeyProcesses[0];
+                _serverProcessPath = process.MainModule?.FileName;
+                _serverWorkingDirectory = Path.GetDirectoryName(_serverProcessPath);
+                ConsoleLog.Success($"Tracked HotkeyListener: {_serverProcessPath}");
             }
-
-            var serverProcess = processes[0];
-            var exePath = serverProcess.MainModule?.FileName;
-
-            if (string.IsNullOrEmpty(exePath))
+            else
             {
-                ConsoleLog.Error("Could not determine HotkeyListener executable path.");
-                return;
+                ConsoleLog.Warning("HotkeyListener process not found for tracking.");
             }
-
-            // Kill the server
-            serverProcess.Kill();
-            serverProcess.WaitForExit(3000);
-
-            // Wait a bit for cleanup
-            System.Threading.Thread.Sleep(500);
-
-            // Restart the server
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = exePath,
-                UseShellExecute = true,
-                WorkingDirectory = Path.GetDirectoryName(exePath)
-            });
-
-            ConsoleLog.Success("HotkeyListener server restarted successfully.");
         }
         catch (Exception ex)
         {
-            ConsoleLog.Error($"Failed to restart server: {ex.Message}");
+            ConsoleLog.Error($"Error tracking server process: {ex.Message}");
         }
+    }
+
+    private async void RestartServerButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_serverProcessPath) || !File.Exists(_serverProcessPath))
+        {
+            ConsoleLog.Error("Server process path not found. Cannot restart.");
+            return;
+        }
+
+        RestartServerButton.IsEnabled = false;
+        RestartServerButton.Content = "Restarting...";
+
+        try
+        {
+            await Task.Run(async () =>
+            {
+                // Kill all HotkeyListener processes using multiple methods
+                if (!await KillHotkeyListenerProcessesAsync())
+                {
+                    ConsoleLog.Error("Failed to kill all HotkeyListener processes. Aborting restart.");
+                    return;
+                }
+
+                // Wait a bit more to ensure cleanup
+                await Task.Delay(1000);
+
+                // Start the server only if all processes are killed
+                ConsoleLog.Info($"Starting HotkeyListener from: {_serverProcessPath}");
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = _serverProcessPath,
+                    WorkingDirectory = _serverWorkingDirectory ?? Path.GetDirectoryName(_serverProcessPath),
+                    UseShellExecute = true
+                };
+
+                var newProcess = Process.Start(startInfo);
+                if (newProcess != null)
+                {
+                    ConsoleLog.Success($"HotkeyListener restarted with PID {newProcess.Id}");
+                }
+                else
+                {
+                    ConsoleLog.Error("Failed to start HotkeyListener process.");
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            ConsoleLog.Error($"Error restarting server: {ex.Message}");
+        }
+        finally
+        {
+            Dispatcher.Invoke(() =>
+            {
+                RestartServerButton.IsEnabled = true;
+                RestartServerButton.Content = "Restart Server";
+            });
+        }
+    }
+
+    private static async Task<bool> KillHotkeyListenerProcessesAsync()
+    {
+        var processes = Process.GetProcessesByName("HotkeyListener");
+        ConsoleLog.Info($"Found {processes.Length} HotkeyListener process(es) to kill");
+
+        if (processes.Length == 0)
+        {
+            return true;
+        }
+
+        // Method 1: Try graceful kill with process tree termination
+        foreach (var process in processes)
+        {
+            try
+            {
+                ConsoleLog.Info($"Attempting to kill process {process.Id} (graceful with tree)...");
+                process.Kill(entireProcessTree: true);
+            }
+            catch (Exception ex)
+            {
+                ConsoleLog.Warning($"Graceful kill failed for {process.Id}: {ex.Message}");
+            }
+        }
+
+        // Wait for processes to exit
+        var maxWait = TimeSpan.FromSeconds(5);
+        var waitStart = DateTime.UtcNow;
+
+        while (DateTime.UtcNow - waitStart < maxWait)
+        {
+            await Task.Delay(200);
+            var remaining = Process.GetProcessesByName("HotkeyListener");
+
+            if (remaining.Length == 0)
+            {
+                ConsoleLog.Success("All HotkeyListener processes terminated gracefully.");
+                return true;
+            }
+
+            ConsoleLog.Info($"Waiting for {remaining.Length} process(es) to exit...");
+        }
+
+        // Method 2: Force kill using taskkill /F
+        ConsoleLog.Warning("Graceful termination failed. Attempting force kill with taskkill...");
+        try
+        {
+            var taskkillProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = "taskkill",
+                Arguments = "/F /IM HotkeyListener.exe /T",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            });
+
+            if (taskkillProcess != null)
+            {
+                await taskkillProcess.WaitForExitAsync();
+                var output = await taskkillProcess.StandardOutput.ReadToEndAsync();
+                var error = await taskkillProcess.StandardError.ReadToEndAsync();
+
+                ConsoleLog.Info($"taskkill output: {output}");
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    ConsoleLog.Warning($"taskkill error: {error}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLog.Error($"Failed to run taskkill: {ex.Message}");
+        }
+
+        // Wait again after force kill
+        maxWait = TimeSpan.FromSeconds(5);
+        waitStart = DateTime.UtcNow;
+
+        while (DateTime.UtcNow - waitStart < maxWait)
+        {
+            await Task.Delay(200);
+            var remaining = Process.GetProcessesByName("HotkeyListener");
+
+            if (remaining.Length == 0)
+            {
+                ConsoleLog.Success("All HotkeyListener processes terminated forcefully.");
+                return true;
+            }
+
+            ConsoleLog.Info($"Still waiting for {remaining.Length} process(es) to exit...");
+        }
+
+        // Method 3: Try direct process termination via WMI/Process.CloseMainWindow
+        ConsoleLog.Warning("Force kill failed. Attempting alternative termination methods...");
+        var stubborn = Process.GetProcessesByName("HotkeyListener");
+
+        foreach (var process in stubborn)
+        {
+            try
+            {
+                ConsoleLog.Info($"Attempting CloseMainWindow on process {process.Id}...");
+                process.CloseMainWindow();
+                await Task.Delay(500);
+
+                if (!process.HasExited)
+                {
+                    ConsoleLog.Info($"CloseMainWindow failed, trying Kill() on {process.Id}...");
+                    process.Kill();
+                }
+            }
+            catch (Exception ex)
+            {
+                ConsoleLog.Warning($"Alternative termination failed for {process.Id}: {ex.Message}");
+            }
+        }
+
+        // Final check
+        await Task.Delay(1000);
+        var finalRemaining = Process.GetProcessesByName("HotkeyListener");
+
+        if (finalRemaining.Length == 0)
+        {
+            ConsoleLog.Success("All HotkeyListener processes eventually terminated.");
+            return true;
+        }
+
+        ConsoleLog.Error($"Failed to kill all processes. {finalRemaining.Length} process(es) still running.");
+        return false;
     }
 
     private sealed record class VariantPayload(string SessionId, string VariantName, string Text);
