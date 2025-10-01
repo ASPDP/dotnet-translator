@@ -89,6 +89,7 @@ internal sealed class TranslationWorkflow : IDisposable
                 ConsoleLog.Info($"Using cached translation ({cachedProvider}): {_lastTranslatedText}");
                 _windowerClient.ShowVariant(sessionId, cachedProvider, _lastTranslatedText!);
                 await _clipboard.SetTextAsync(_lastTranslatedText!, sessionToken).ConfigureAwait(false);
+                _windowerClient.ShowClipboard(_lastTranslatedText!);
 
                 // Still start all translators for additional options (but don't wait for primary)
                 var (started, _, _) = StartVariantRequests(sessionId, originalText, from, to, sessionCts, displayPrimaryTranslators: false);
@@ -111,6 +112,7 @@ internal sealed class TranslationWorkflow : IDisposable
                         _lastTranslatedProvider = firstResult.Value.Name;
 
                         await _clipboard.SetTextAsync(firstResult.Value.Text, sessionToken).ConfigureAwait(false);
+                        _windowerClient.ShowClipboard(firstResult.Value.Text);
                     }
                 }
             }

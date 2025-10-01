@@ -25,6 +25,8 @@ internal sealed class WindowerClient
 
     public void ShowRhombus() => SendMessage("SHOW_RHOMBUS");
 
+    public void ShowClipboard(string text) => SendMessage($"SHOW_CLIPBOARD:{text}");
+
     private void SendStructuredMessage(string command, object payload)
     {
         var json = JsonSerializer.Serialize(payload, SerializerOptions);
