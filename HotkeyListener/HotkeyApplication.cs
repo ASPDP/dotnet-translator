@@ -48,8 +48,8 @@ internal sealed class HotkeyApplication : IDisposable
         var languageResolver = new LanguageDirectionResolver();
 
         // HTTP clients
-        var translationHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        var openRouterHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        var translationHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        var openRouterHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
         var openRouterApiKey = TranslatorsConfigLoader.LoadOpenRouterApiKey();
 
         // Create translators

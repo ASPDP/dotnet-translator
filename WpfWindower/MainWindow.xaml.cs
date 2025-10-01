@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
@@ -51,6 +52,8 @@ public partial class MainWindow : Window
     private TimeSpan? _overlayRemainingWhenPaused;
     private TimeSpan _overlayElapsedBeforePause = TimeSpan.Zero;
 
+    private DispatcherTimer? _clipboardTimer;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -58,6 +61,7 @@ public partial class MainWindow : Window
         OverlayView.VariantsItems.ItemsSource = _variantItems;
         OverlayView.VariantExplanationHoverChanged += OnVariantExplanationHoverChanged;
         ClipboardOverlayView.CloseButton.Click += CloseClipboardOverlayButton_Click;
+        KeyDown += MainWindow_KeyDown;
         Task.Run(StartPipeServer);
     }
 
@@ -138,6 +142,12 @@ public partial class MainWindow : Window
         {
             var text = message["SHOW_CLIPBOARD:".Length..];
             ShowClipboardOverlay(text);
+            return;
+        }
+
+        if (message == "RESTART_SERVER")
+        {
+            RestartServer();
             return;
         }
 
@@ -560,10 +570,30 @@ public partial class MainWindow : Window
 
         ClipboardOverlayView.MessageText.Text = message;
         ClipboardOverlayPopup.IsOpen = true;
+
+        // Auto-close after 0.5 seconds
+        if (_clipboardTimer == null)
+        {
+            _clipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            _clipboardTimer.Tick += ClipboardTimer_Tick;
+        }
+        else
+        {
+            _clipboardTimer.Stop();
+        }
+
+        _clipboardTimer.Start();
+    }
+
+    private void ClipboardTimer_Tick(object? sender, EventArgs e)
+    {
+        _clipboardTimer?.Stop();
+        CloseClipboardOverlay();
     }
 
     private void CloseClipboardOverlayButton_Click(object sender, RoutedEventArgs e)
     {
+        _clipboardTimer?.Stop();
         CloseClipboardOverlay();
     }
 
@@ -571,6 +601,64 @@ public partial class MainWindow : Window
     {
         ClipboardOverlayPopup.IsOpen = false;
         ClipboardOverlayView.MessageText.Text = string.Empty;
+    }
+
+    private void MainWindow_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        // Ctrl+Shift+R to restart server
+        if (e.Key == System.Windows.Input.Key.R &&
+            (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) == System.Windows.Input.ModifierKeys.Control &&
+            (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Shift) == System.Windows.Input.ModifierKeys.Shift)
+        {
+            RestartServer();
+            e.Handled = true;
+        }
+    }
+
+    private void RestartServer()
+    {
+        try
+        {
+            ConsoleLog.Info("Restarting HotkeyListener server...");
+
+            // Find HotkeyListener process
+            var processes = Process.GetProcessesByName("HotkeyListener");
+            if (processes.Length == 0)
+            {
+                ConsoleLog.Warning("HotkeyListener process not found.");
+                return;
+            }
+
+            var serverProcess = processes[0];
+            var exePath = serverProcess.MainModule?.FileName;
+
+            if (string.IsNullOrEmpty(exePath))
+            {
+                ConsoleLog.Error("Could not determine HotkeyListener executable path.");
+                return;
+            }
+
+            // Kill the server
+            serverProcess.Kill();
+            serverProcess.WaitForExit(3000);
+
+            // Wait a bit for cleanup
+            System.Threading.Thread.Sleep(500);
+
+            // Restart the server
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = exePath,
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(exePath)
+            });
+
+            ConsoleLog.Success("HotkeyListener server restarted successfully.");
+        }
+        catch (Exception ex)
+        {
+            ConsoleLog.Error($"Failed to restart server: {ex.Message}");
+        }
     }
 
     private sealed record class VariantPayload(string SessionId, string VariantName, string Text);
