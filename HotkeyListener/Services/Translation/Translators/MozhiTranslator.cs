@@ -28,8 +28,12 @@ internal sealed class MozhiTranslator : HttpTranslatorBase
 
         var url = $"http://127.0.0.1:{_port}/api/translate?engine={engineValue}&from={fromValue}&to={toValue}&text={textValue}";
 
+        ConsoleLog.Info($"{Name} sending HTTP request to {url}");
+
         using var httpRequest = new HttpRequestMessage(HttpMethod.Get, url);
         using var response = await HttpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
+
+        ConsoleLog.Info($"{Name} received response: {response.StatusCode}");
 
         if (!response.IsSuccessStatusCode)
         {
@@ -40,6 +44,8 @@ internal sealed class MozhiTranslator : HttpTranslatorBase
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         var translationResponse = await JsonSerializer.DeserializeAsync<TranslationResponse>(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        ConsoleLog.Info($"{Name} deserialized response: {translationResponse?.TranslatedText ?? "null"}");
 
         return translationResponse?.TranslatedText;
     }

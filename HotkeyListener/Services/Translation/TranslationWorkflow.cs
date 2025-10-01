@@ -76,6 +76,10 @@ internal sealed class TranslationWorkflow : IDisposable
                 return;
             }
 
+            // Backup original text to restore to clipboard later
+            var clipboardBackup = originalText;
+            ConsoleLog.Info($"Backed up clipboard: {clipboardBackup}");
+
             var sessionId = Guid.NewGuid().ToString("N");
 
             var (from, to) = _languageResolver.Resolve(originalText);
@@ -88,8 +92,11 @@ internal sealed class TranslationWorkflow : IDisposable
                 var cachedProvider = _lastTranslatedProvider ?? (_primaryTranslators.Count > 0 ? _primaryTranslators[0].Name : "cached");
                 ConsoleLog.Info($"Using cached translation ({cachedProvider}): {_lastTranslatedText}");
                 _windowerClient.ShowVariant(sessionId, cachedProvider, _lastTranslatedText!);
-                await _clipboard.SetTextAsync(_lastTranslatedText!, sessionToken).ConfigureAwait(false);
                 _windowerClient.ShowClipboard(_lastTranslatedText!);
+
+                // Restore original text to clipboard
+                await _clipboard.SetTextAsync(clipboardBackup, sessionToken).ConfigureAwait(false);
+                ConsoleLog.Info($"Restored original text to clipboard: {clipboardBackup}");
 
                 // Still start all translators for additional options (but don't wait for primary)
                 var (started, _, _) = StartVariantRequests(sessionId, originalText, from, to, sessionCts, displayPrimaryTranslators: false);
@@ -111,8 +118,11 @@ internal sealed class TranslationWorkflow : IDisposable
                         _lastTranslatedText = firstResult.Value.Text;
                         _lastTranslatedProvider = firstResult.Value.Name;
 
-                        await _clipboard.SetTextAsync(firstResult.Value.Text, sessionToken).ConfigureAwait(false);
                         _windowerClient.ShowClipboard(firstResult.Value.Text);
+
+                        // Restore original text to clipboard
+                        await _clipboard.SetTextAsync(clipboardBackup, sessionToken).ConfigureAwait(false);
+                        ConsoleLog.Info($"Restored original text to clipboard: {clipboardBackup}");
                     }
                 }
             }
