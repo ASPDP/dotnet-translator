@@ -1,6 +1,7 @@
 using System.IO;
 using HotkeyListener.Interop;
 using HotkeyListener.Services;
+using HotkeyListener.Services.Translators;
 
 namespace HotkeyListener;
 
@@ -42,21 +43,47 @@ internal sealed class HotkeyApplication : IDisposable
         var windowerClient = new WindowerClient("DotNetTranslatorPipe");
         var languageResolver = new LanguageDirectionResolver();
 
+        // HTTP clients
         var translationHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        var translationSettings = new TranslationApiSettings("google", "yandex", 3000, 3001);
-        var translationClient = new TranslationApiClient(translationHttpClient, translationSettings);
-
         var openRouterHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         var openRouterApiKey = LoadOpenRouterApiKey();
-        var openRouterClient = new OpenRouterClient(openRouterHttpClient, openRouterApiKey,
-            "x-ai/grok-4-fast:free");
+
+        // Create translators
+        // Traditional translators (fast, reliable) - all treated as primary candidates
+        var primaryTranslators = new List<ITranslator>
+        {
+            new MozhiTranslator(translationHttpClient, "google", port: 3000),
+            new MozhiTranslator(translationHttpClient, "yandex", port: 3000),
+            new DeepLTranslator(translationHttpClient, port: 3001)
+        };
+
+        // AI translators (slower, but provide additional context) - always run as variants
+        var aiTranslators = new List<ITranslator>
+        {
+            new OpenRouterTranslator(
+                openRouterHttpClient,
+                openRouterApiKey,
+                new OpenRouterConfig(
+                    ModelId: "x-ai/grok-4-fast:free",
+                    DisplayName: "Grok",
+                    IncludeErrorExplanation: true,
+                    StripReasoningTags: false)),
+            new OpenRouterTranslator(
+                openRouterHttpClient,
+                openRouterApiKey,
+                new OpenRouterConfig(
+                    ModelId: "deepseek/deepseek-chat-v3.1:free",
+                    DisplayName: "DeepSeek",
+                    IncludeErrorExplanation: false,
+                    StripReasoningTags: true))
+        };
 
         var workflow = new TranslationWorkflow(
             selectionCapture,
             clipboard,
-            translationClient,
+            primaryTranslators,
+            aiTranslators,
             windowerClient,
-            openRouterClient,
             hotkeyListener,
             languageResolver);
 
@@ -77,7 +104,7 @@ internal sealed class HotkeyApplication : IDisposable
     {
         Application.Run();
     }
-    
+
     private void OnHotkeyTriggered(object? sender, EventArgs e)
     {
         _ = Task.Run(() => _workflow.HandleHotkeyAsync(_cts.Token));

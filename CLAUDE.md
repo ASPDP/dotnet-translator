@@ -32,20 +32,44 @@ When hotkey is triggered:
 2. `SelectionCaptureService` simulates Ctrl+C to capture selected text
 3. `ClipboardService` retrieves text from clipboard
 4. `LanguageDirectionResolver` detects language direction (Cyrillic → en-ru, otherwise → ru-en)
-5. `TranslationWorkflow` starts multiple translation requests in parallel:
-   - Default engine (Google via Mozhi on port 3000)
-   - DeepL (via custom Python server on port 3001)
-   - x-ai/grok-4-fast via OpenRouter API
-   - deepseek/deepseek-chat-v3.1 via OpenRouter API
-6. First completed translation goes to clipboard immediately
-7. All translation variants are sent to WpfWindower as they complete
-8. WpfWindower displays results in overlay with auto-hide timer
+5. `TranslationWorkflow` starts **all** translation requests in parallel:
+   - **Primary translators** (fast, traditional): Google, Yandex (both via Mozhi on port 3000), DeepL (port 3001)
+   - **Variant translators** (slower, AI-based): Grok, DeepSeek (both via OpenRouter API)
+6. **All translators run independently** - none are cancelled when others complete
+7. First completed **primary translator** (Google/Yandex/DeepL) result goes to clipboard
+8. All translation results are sent to WpfWindower as they complete (including all primary translators)
+9. WpfWindower displays results in overlay with auto-hide timer
+
+### Translator Architecture
+
+All translators implement a common `ITranslator` interface with inheritance hierarchy:
+
+```
+ITranslator (interface)
+  └─ HttpTranslatorBase (abstract base with error handling)
+       ├─ MozhiTranslator (Google, Yandex via Mozhi API)
+       ├─ DeepLTranslator (DeepL via custom Python server)
+       └─ OpenRouterTranslator (Grok, DeepSeek via OpenRouter API)
+```
+
+**ITranslator**: Common interface with `TranslateAsync(text, sourceLanguage, targetLanguage, cancellationToken)` method and `Name` property
+
+**HttpTranslatorBase**: Abstract base class providing:
+- Common error handling (HTTP errors, cancellation, timeouts)
+- Template method pattern with `TranslateInternalAsync` (abstract) and `PostProcessTranslation` (virtual)
+- Logging infrastructure
+
+**Specific Translators**:
+- **MozhiTranslator**: Configured with engine name (google/yandex) and port
+- **DeepLTranslator**: Uses port 3001, internally calls Google engine
+- **OpenRouterTranslator**: Unified implementation for all OpenRouter models (Grok, DeepSeek)
+  - Configured via `OpenRouterConfig` record with `ModelId`, `DisplayName`, `IncludeErrorExplanation`, `StripReasoningTags`
+  - Handles DeepSeek reasoning tags `<think>...</think>` stripping when configured
+  - Can add error explanations in Russian for English source text (Grok only)
 
 ### Key Services
 
-- **TranslationWorkflow**: Main orchestrator for translation sessions. Handles caching (reuses last translation if same text), parallel variant requests, session cancellation
-- **TranslationApiClient**: HTTP client for Mozhi translation API with fallback support
-- **OpenRouterClient**: HTTP client for OpenRouter API (Grok and DeepSeek models). Includes special handling for DeepSeek reasoning tags `<think>...</think>` which are stripped from output
+- **TranslationWorkflow**: Main orchestrator for translation sessions. Uses a list of primary translators (Google/Yandex/DeepL) and variant translators (AI models). All translators run concurrently without cancellation. Waits for first primary translator to complete for clipboard, but continues running all others in background. Handles caching (reuses last translation if same text).
 - **WindowerClient**: Named Pipe client that sends structured JSON messages to WpfWindower
 - **ExternalProcessManager**: Ensures external dependencies are running (Mozhi, DeepL server, WpfWindower)
 - **LanguageDirectionResolver**: Uses regex to detect Cyrillic characters and determine translation direction
@@ -69,11 +93,13 @@ OpenRouter API key is loaded in this order:
 ### Translation Variant Display
 
 The WPF overlay window shows:
-- **Initial variant**: First translation result (replaces previous if same text, reuses cached if duplicate request)
-- **Additional variants**: DeepL, Grok, DeepSeek translations as they complete
+- **Primary translations**: Google, Yandex, and DeepL results as they complete (all run independently)
+- **AI variants**: Grok and DeepSeek translations as they complete
 - **Explanation feature**: Grok translations can include `---` separator followed by error explanations in Russian (for English source text only)
 - **Progress bar**: Auto-hide timer based on word count (130 words per minute reading speed + 2 seconds)
 - **Hover pause**: Timer pauses when hovering over explanations
+
+**Important**: Even though Google responds fastest, Yandex and DeepL translations continue running in the background and display when ready.
 
 ## Building and Running
 
@@ -96,6 +122,32 @@ dotnet run --project HotkeyListener/HotkeyListener.csproj
 Or run the compiled executable:
 ```bash
 ./HotkeyListener/bin/Debug/net9.0-windows/HotkeyListener.exe
+```
+
+### Adding New Translators
+
+To add a new translation provider:
+
+1. Create a new class in `HotkeyListener/Services/Translators/` that inherits from `HttpTranslatorBase`
+2. Implement `TranslateInternalAsync` to perform the HTTP translation request
+3. Optionally override `PostProcessTranslation` for custom post-processing
+4. Add the translator instance to `variantTranslators` list in `HotkeyApplication.CreateDefault()`
+
+Example:
+```csharp
+internal sealed class MyTranslator : HttpTranslatorBase
+{
+    public MyTranslator(HttpClient httpClient)
+        : base(httpClient, "MyTranslator") { }
+
+    protected override async Task<string?> TranslateInternalAsync(
+        string text, string sourceLanguage, string targetLanguage,
+        CancellationToken cancellationToken)
+    {
+        // Implement HTTP request logic
+        return translatedText;
+    }
+}
 ```
 
 ### Configuration Note

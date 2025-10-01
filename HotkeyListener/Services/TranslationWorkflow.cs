@@ -1,9 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Text.RegularExpressions;
-using HotkeyListener.Models;
+using HotkeyListener.Services.Translators;
 
 namespace HotkeyListener.Services;
 
@@ -11,15 +6,13 @@ internal sealed class TranslationWorkflow : IDisposable
 {
     private readonly SelectionCaptureService _selectionCapture;
     private readonly ClipboardService _clipboard;
-    private readonly TranslationApiClient _translationClient;
+    private readonly IReadOnlyList<ITranslator> _primaryTranslators;
+    private readonly IReadOnlyList<ITranslator> _variantTranslators;
     private readonly WindowerClient _windowerClient;
-    private readonly OpenRouterClient _openRouterClient;
     private readonly IHotkeySimulationGuard _simulationGuard;
     private readonly LanguageDirectionResolver _languageResolver;
     private readonly SemaphoreSlim _processingLock = new(1, 1);
     private readonly object _sessionSync = new();
-
-    private const string DeepseekChatModel = "deepseek/deepseek-chat-v3.1:free";
 
     private string? _lastSourceText;
     private string? _lastTranslatedText;
@@ -29,17 +22,17 @@ internal sealed class TranslationWorkflow : IDisposable
     public TranslationWorkflow(
         SelectionCaptureService selectionCapture,
         ClipboardService clipboard,
-        TranslationApiClient translationClient,
+        IReadOnlyList<ITranslator> primaryTranslators,
+        IReadOnlyList<ITranslator> variantTranslators,
         WindowerClient windowerClient,
-        OpenRouterClient openRouterClient,
         IHotkeySimulationGuard simulationGuard,
         LanguageDirectionResolver languageResolver)
     {
         _selectionCapture = selectionCapture;
         _clipboard = clipboard;
-        _translationClient = translationClient;
+        _primaryTranslators = primaryTranslators;
+        _variantTranslators = variantTranslators;
         _windowerClient = windowerClient;
-        _openRouterClient = openRouterClient;
         _simulationGuard = simulationGuard;
         _languageResolver = languageResolver;
     }
@@ -88,30 +81,31 @@ internal sealed class TranslationWorkflow : IDisposable
             if (reuseCached && !string.IsNullOrWhiteSpace(_lastTranslatedText))
             {
                 // Use cached result immediately
-                var cachedProvider = _lastTranslatedProvider ?? _translationClient.DefaultEngine;
+                var cachedProvider = _lastTranslatedProvider ?? (_primaryTranslators.Count > 0 ? _primaryTranslators[0].Name : "cached");
                 ConsoleLog.Info($"Using cached translation ({cachedProvider}): {_lastTranslatedText}");
                 _windowerClient.ShowVariant(sessionId, cachedProvider, _lastTranslatedText!);
                 await _clipboard.SetTextAsync(_lastTranslatedText!, sessionToken).ConfigureAwait(false);
-                
-                // Still start variants for additional options
-                var (started, _) = StartVariantRequests(sessionId, originalText, from, to, sessionCts, displayDefaultVariant: false);
+
+                // Still start all translators for additional options (but don't wait for primary)
+                var (started, _, _) = StartVariantRequests(sessionId, originalText, from, to, sessionCts, displayPrimaryTranslators: false);
                 variantsStarted = started;
             }
             else
             {
-                // Start variants and wait for the first completed response
-                var (started, variantTasks) = StartVariantRequests(sessionId, originalText, from, to, sessionCts, displayDefaultVariant: true);
+                // Start all translators and wait for the first primary translator to complete
+                var (started, primaryTasks, variantTasks) = StartVariantRequests(sessionId, originalText, from, to, sessionCts, displayPrimaryTranslators: true);
                 variantsStarted = started;
-                
-                if (started)
+
+                if (started && primaryTasks.Length > 0)
                 {
-                    var firstResult = await WaitForFirstVariantAsync(variantTasks, sessionToken).ConfigureAwait(false);
+                    // Wait for the first PRIMARY translator (Google/Yandex/DeepL) to complete
+                    var firstResult = await WaitForFirstVariantAsync(primaryTasks, sessionToken).ConfigureAwait(false);
                     if (firstResult is not null)
                     {
                         _lastSourceText = originalText;
                         _lastTranslatedText = firstResult.Value.Text;
                         _lastTranslatedProvider = firstResult.Value.Name;
-                        
+
                         await _clipboard.SetTextAsync(firstResult.Value.Text, sessionToken).ConfigureAwait(false);
                     }
                 }
@@ -145,29 +139,48 @@ internal sealed class TranslationWorkflow : IDisposable
         }
     }
 
-    private (bool Started, Task<VariantResult?>[] VariantTasks) StartVariantRequests(
+    private (bool Started, Task<VariantResult?>[] PrimaryTasks, Task<VariantResult?>[] VariantTasks) StartVariantRequests(
         string sessionId,
         string originalText,
         string from,
         string to,
         CancellationTokenSource sessionCts,
-        bool displayDefaultVariant)
+        bool displayPrimaryTranslators)
     {
         var sessionToken = sessionCts.Token;
         if (sessionToken.IsCancellationRequested)
         {
-            return (false, Array.Empty<Task<VariantResult?>>());
+            return (false, Array.Empty<Task<VariantResult?>>(), Array.Empty<Task<VariantResult?>>());
         }
 
-        var defaultTask = GetDefaultVariantAsync(sessionId, originalText, from, to, sessionToken);
-        var deeplTask = GetDeeplVariantAsync(sessionId, originalText, from, to, sessionToken);
-        var openRouterTask = GetOpenRouterVariantAsync(sessionId, originalText, from, to, sessionToken);
-        var deepseekChatTask = GetDeepseekChatVariantAsync(sessionId, originalText, from, to, sessionToken);
-
-        var variantTasks = new[] { defaultTask, deeplTask, openRouterTask, deepseekChatTask };
-
-        void AttachVariantNotifier(Task<VariantResult?> variantTask)
+        // Create tasks for all primary translators (Google, Yandex, DeepL)
+        var primaryTasks = new List<Task<VariantResult?>>();
+        foreach (var translator in _primaryTranslators)
         {
+            var task = TranslateAsync(translator, sessionId, originalText, from, to, sessionToken);
+            primaryTasks.Add(task);
+        }
+
+        // Create tasks for variant translators (AI models)
+        var variantTasks = new List<Task<VariantResult?>>();
+        foreach (var translator in _variantTranslators)
+        {
+            var task = TranslateAsync(translator, sessionId, originalText, from, to, sessionToken);
+            variantTasks.Add(task);
+        }
+
+        var primaryTasksArray = primaryTasks.ToArray();
+        var variantTasksArray = variantTasks.ToArray();
+        var allTasks = primaryTasks.Concat(variantTasks).ToArray();
+
+        // Attach notifiers to display results as they complete
+        void AttachVariantNotifier(Task<VariantResult?> variantTask, bool shouldDisplay)
+        {
+            if (!shouldDisplay)
+            {
+                return;
+            }
+
             variantTask.ContinueWith(t =>
             {
                 if (!t.IsCompletedSuccessfully || t.Result is null || sessionToken.IsCancellationRequested)
@@ -179,28 +192,32 @@ internal sealed class TranslationWorkflow : IDisposable
             }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
 
-        if (displayDefaultVariant)
+        // Display primary translators if requested
+        foreach (var task in primaryTasks)
         {
-            AttachVariantNotifier(defaultTask);
+            AttachVariantNotifier(task, displayPrimaryTranslators);
         }
 
-        AttachVariantNotifier(deeplTask);
-        AttachVariantNotifier(openRouterTask);
-        AttachVariantNotifier(deepseekChatTask);
+        // Always display all variant translators
+        foreach (var task in variantTasks)
+        {
+            AttachVariantNotifier(task, true);
+        }
 
+        // Wait for all translators (or cancellation) - they all run independently
         var pipelineTask = Task.Run(async () =>
         {
             try
             {
-                await Task.WhenAll(variantTasks).ConfigureAwait(false);
+                await Task.WhenAll(allTasks).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                ConsoleLog.Info("Translation session canceled before all variants completed.");
+                ConsoleLog.Info("Translation session canceled before all translators completed.");
             }
             catch (Exception ex)
             {
-                ConsoleLog.Error($"Variant pipeline error: {ex}");
+                ConsoleLog.Error($"Translation pipeline error: {ex}");
             }
         }, CancellationToken.None);
 
@@ -209,14 +226,14 @@ internal sealed class TranslationWorkflow : IDisposable
             if (t.IsFaulted)
             {
                 var baseException = t.Exception?.GetBaseException();
-                ConsoleLog.Error($"Variant pipeline faulted: {baseException}");
+                ConsoleLog.Error($"Translation pipeline faulted: {baseException}");
             }
 
             TryResetActiveSession(sessionCts);
             sessionCts.Dispose();
         }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
-        return (true, variantTasks);
+        return (true, primaryTasksArray, variantTasksArray);
     }
 
     private static async Task<VariantResult?> WaitForFirstVariantAsync(Task<VariantResult?>[] variantTasks, CancellationToken sessionToken)
@@ -254,29 +271,26 @@ internal sealed class TranslationWorkflow : IDisposable
         return null;
     }
 
-    private async Task<VariantResult?> GetDeeplVariantAsync(string sessionId, string text, string from, string to, CancellationToken cancellationToken)
+    private async Task<VariantResult?> TranslateAsync(
+        ITranslator translator,
+        string sessionId,
+        string text,
+        string from,
+        string to,
+        CancellationToken cancellationToken)
     {
-        const string providerName = "DeepL";
-        LogTranslationStart(sessionId, providerName, text);
+        LogTranslationStart(sessionId, translator.Name, text);
 
         try
         {
-            var request = new TranslationRequest
-            {
-                Text = text,
-                From = from,
-                To = to,
-                Engine = "deepl"
-            };
-
-            var aiResult = await _translationClient.TranslateAsync(request, cancellationToken).ConfigureAwait(false);
-            if (aiResult is null)
+            var translatedText = await translator.TranslateAsync(text, from, to, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(translatedText))
             {
                 return null;
             }
 
-            LogTranslationEnd(sessionId, providerName, aiResult.Value.Text);
-            return new VariantResult(providerName, aiResult.Value.Text);
+            LogTranslationEnd(sessionId, translator.Name, translatedText);
+            return new VariantResult(translator.Name, translatedText);
         }
         catch (OperationCanceledException)
         {
@@ -284,122 +298,9 @@ internal sealed class TranslationWorkflow : IDisposable
         }
         catch (Exception ex)
         {
-            ConsoleLog.Error($"Variant \"{providerName}\" error: {ex}");
+            ConsoleLog.Error($"Variant \"{translator.Name}\" error: {ex.Message}");
             return null;
         }
-    }
-
-    private async Task<VariantResult?> GetOpenRouterVariantAsync(string sessionId, string text, string from, string to, CancellationToken cancellationToken)
-    {
-        const string providerName = "x-ai/grok-4-fast:free";
-        LogTranslationStart(sessionId, providerName, text);
-
-        try
-        {
-            var variantText = await _openRouterClient.RequestVariantAsync(text, from, to, cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(variantText))
-            {
-                return null;
-            }
-
-            variantText = StripDeepseekReasoning(variantText);
-            if (string.IsNullOrWhiteSpace(variantText))
-            {
-                return null;
-            }
-
-            LogTranslationEnd(sessionId, providerName, variantText);
-            return new VariantResult(providerName, variantText);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            ConsoleLog.Error($"Variant \"{providerName}\" error: {ex}");
-            return null;
-        }
-    }
-
-    private async Task<VariantResult?> GetDefaultVariantAsync(string sessionId, string text, string from, string to, CancellationToken cancellationToken)
-    {
-        var providerName = _translationClient.DefaultEngine;
-        LogTranslationStart(sessionId, providerName, text);
-
-        try
-        {
-            var request = new TranslationRequest
-            {
-                Text = text,
-                From = from,
-                To = to,
-                Engine = _translationClient.DefaultEngine
-            };
-
-            var translationResult = await _translationClient.TranslateAsync(request, cancellationToken).ConfigureAwait(false);
-            if (translationResult is null)
-            {
-                return null;
-            }
-
-            var result = translationResult.Value;
-            LogTranslationEnd(sessionId, result.Provider, result.Text);
-            return new VariantResult(result.Provider, result.Text);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            ConsoleLog.Error($"Variant \"{providerName}\" error: {ex}");
-            return null;
-        }
-    }
-
-    private async Task<VariantResult?> GetDeepseekChatVariantAsync(string sessionId, string text, string from, string to, CancellationToken cancellationToken)
-    {
-        const string providerName = "DeepSeek V3.1";
-        LogTranslationStart(sessionId, providerName, text);
-
-        try
-        {
-            var variantText = await _openRouterClient.RequestVariantAsync(text, from, to, cancellationToken, modelOverride: DeepseekChatModel).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(variantText))
-            {
-                return null;
-            }
-
-            variantText = StripDeepseekReasoning(variantText);
-            if (string.IsNullOrWhiteSpace(variantText))
-            {
-                return null;
-            }
-
-            LogTranslationEnd(sessionId, providerName, variantText);
-            return new VariantResult(providerName, variantText);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            ConsoleLog.Error($"Variant \"{providerName}\" error: {ex}");
-            return null;
-        }
-    }
-
-    private static string StripDeepseekReasoning(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return string.Empty;
-        }
-
-        var cleaned = Regex.Replace(text, "<think>.*?</think>", string.Empty, RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        return cleaned.Trim();
     }
 
     public void Dispose()
@@ -473,5 +374,3 @@ internal sealed class TranslationWorkflow : IDisposable
 
     private readonly record struct VariantResult(string Name, string Text);
 }
-
-
