@@ -23,5 +23,10 @@
                AllowsTransparency="True">
             <views:OverlayMessageView x:Name="OverlayView" />
         </Popup>
+        <Popup x:Name="ClipboardOverlayPopup"
+               Placement="Center"
+               AllowsTransparency="True">
+            <views:ClipboardOverlayView x:Name="ClipboardOverlayView" />
+        </Popup>
     </Grid>
 </Window>

@@ -50,7 +50,7 @@ internal sealed class HotkeyApplication : IDisposable
         // HTTP clients
         var translationHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         var openRouterHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        var openRouterApiKey = LoadOpenRouterApiKey();
+        var openRouterApiKey = TranslatorsConfigLoader.LoadOpenRouterApiKey();
 
         // Create translators
         // Traditional translators (fast, reliable) - all treated as primary candidates
@@ -111,63 +111,6 @@ internal sealed class HotkeyApplication : IDisposable
         _translationHttpClient.Dispose();
         _openRouterHttpClient.Dispose();
         _cts.Dispose();
-    }
-
-    private static string? LoadOpenRouterApiKey()
-    {
-        const string keyFileName = "openrouter_api_key.txt";
-
-        var apiKeyFromFile = TryReadApiKeyFromFile(keyFileName);
-        if (!string.IsNullOrWhiteSpace(apiKeyFromFile))
-        {
-            return apiKeyFromFile;
-        }
-
-        return Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
-    }
-
-    private static string? TryReadApiKeyFromFile(string keyFileName)
-    {
-        var directory = AppContext.BaseDirectory;
-
-        while (!string.IsNullOrWhiteSpace(directory))
-        {
-            var candidate = Path.Combine(directory, keyFileName);
-            if (File.Exists(candidate))
-            {
-                try
-                {
-                    foreach (var line in File.ReadLines(candidate))
-                    {
-                        var trimmed = line.Trim();
-                        if (!string.IsNullOrWhiteSpace(trimmed))
-                        {
-                            return trimmed;
-                        }
-                    }
-                }
-                catch (IOException)
-                {
-                    return null;
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    return null;
-                }
-
-                return null;
-            }
-
-            var parent = Directory.GetParent(directory);
-            if (parent is null)
-            {
-                break;
-            }
-
-            directory = parent.FullName;
-        }
-
-        return null;
     }
 
 }

@@ -1,4 +1,5 @@
 {
+  "openRouterApiKey": "",
   "openRouterModels": [
     {
       "modelId": "x-ai/grok-4-fast:free",

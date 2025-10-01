@@ -57,6 +57,7 @@ public partial class MainWindow : Window
         OverlayView.CloseButton.Click += CloseOverlayButton_Click;
         OverlayView.VariantsItems.ItemsSource = _variantItems;
         OverlayView.VariantExplanationHoverChanged += OnVariantExplanationHoverChanged;
+        ClipboardOverlayView.CloseButton.Click += CloseClipboardOverlayButton_Click;
         Task.Run(StartPipeServer);
     }
 
@@ -73,6 +74,11 @@ public partial class MainWindow : Window
         OverlayPopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Center;
         OverlayPopup.MaxWidth = SystemParameters.PrimaryScreenWidth / 5;
         OverlayView.OverlayBorder.MaxWidth = SystemParameters.PrimaryScreenWidth / 5;
+
+        ClipboardOverlayPopup.PlacementTarget = this;
+        ClipboardOverlayPopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Center;
+        ClipboardOverlayPopup.MaxWidth = SystemParameters.PrimaryScreenWidth / 5;
+        ClipboardOverlayView.OverlayBorder.MaxWidth = SystemParameters.PrimaryScreenWidth / 5;
     }
 
     private void ShowRhombus()
@@ -125,6 +131,13 @@ public partial class MainWindow : Window
         {
             var payloadJson = message["SHOW_VARIANT:".Length..];
             HandleVariantPayload(payloadJson);
+            return;
+        }
+
+        if (message.StartsWith("SHOW_CLIPBOARD:", StringComparison.Ordinal))
+        {
+            var text = message["SHOW_CLIPBOARD:".Length..];
+            ShowClipboardOverlay(text);
             return;
         }
 
@@ -537,6 +550,27 @@ public partial class MainWindow : Window
 
         var separators = new[] { ' ', '\r', '\n', '\t' };
         return text.Split(separators, StringSplitOptions.RemoveEmptyEntries).Length;
+    }
+
+    private void ShowClipboardOverlay(string message)
+    {
+        // Close other windows first
+        CloseOverlay();
+        RhombusPopup.IsOpen = false;
+
+        ClipboardOverlayView.MessageText.Text = message;
+        ClipboardOverlayPopup.IsOpen = true;
+    }
+
+    private void CloseClipboardOverlayButton_Click(object sender, RoutedEventArgs e)
+    {
+        CloseClipboardOverlay();
+    }
+
+    private void CloseClipboardOverlay()
+    {
+        ClipboardOverlayPopup.IsOpen = false;
+        ClipboardOverlayView.MessageText.Text = string.Empty;
     }
 
     private sealed record class VariantPayload(string SessionId, string VariantName, string Text);

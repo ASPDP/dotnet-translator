@@ -9,6 +9,7 @@ namespace HotkeyListener.Services.Translation;
 /// Configuration model for translators_config.json file.
 /// </summary>
 internal sealed record TranslatorsConfig(
+    string? OpenRouterApiKey,
     List<OpenRouterModelConfig> OpenRouterModels
 );
 
@@ -35,6 +36,36 @@ internal static class TranslatorsConfigLoader
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true
     };
+
+    /// <summary>
+    /// Loads OpenRouter API key from translators_config.json.
+    /// Falls back to environment variable if not found in config.
+    /// </summary>
+    public static string? LoadOpenRouterApiKey()
+    {
+        var configPath = FindConfigFile();
+        if (configPath == null)
+        {
+            return Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
+        }
+
+        try
+        {
+            var json = File.ReadAllText(configPath);
+            var config = JsonSerializer.Deserialize<TranslatorsConfig>(json, SerializerOptions);
+
+            if (!string.IsNullOrWhiteSpace(config?.OpenRouterApiKey))
+            {
+                return config.OpenRouterApiKey;
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or IOException)
+        {
+            ConsoleLog.Warning($"Could not read API key from config: {ex.Message}");
+        }
+
+        return Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
+    }
 
     /// <summary>
     /// Loads OpenRouter configurations from translators_config.json.
