@@ -1,0 +1,16 @@
+{
+  "openRouterModels": [
+    {
+      "modelId": "x-ai/grok-4-fast:free",
+      "displayName": "Grok",
+      "includeErrorExplanation": true,
+      "stripReasoningTags": false
+    },
+    {
+      "modelId": "deepseek/deepseek-chat-v3.1:free",
+      "displayName": "DeepSeek",
+      "includeErrorExplanation": false,
+      "stripReasoningTags": true
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace HotkeyListener.Services;
+namespace HotkeyListener.Services.Translation;
 
 internal sealed class LanguageDirectionResolver
 {

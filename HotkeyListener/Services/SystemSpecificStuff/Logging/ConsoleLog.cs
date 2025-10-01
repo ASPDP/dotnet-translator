@@ -1,6 +1,4 @@
-using System;
-
-namespace HotkeyListener.Services;
+namespace HotkeyListener.Services.SystemSpecificStuff.Logging;
 
 internal static class ConsoleLog
 {

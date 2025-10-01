@@ -2,8 +2,9 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using HotkeyListener.Services.SystemSpecificStuff.Logging;
 
-namespace HotkeyListener.Services.Translators;
+namespace HotkeyListener.Services.Translation.Translators;
 
 /// <summary>
 /// Configuration for OpenRouter-based translation.

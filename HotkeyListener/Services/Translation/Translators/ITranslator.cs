@@ -1,4 +1,4 @@
-namespace HotkeyListener.Services.Translators;
+namespace HotkeyListener.Services.Translation.Translators;
 
 /// <summary>
 /// Represents a translation service that can translate text between languages.

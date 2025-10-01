@@ -1,6 +1,10 @@
-using HotkeyListener.Services.Translators;
+using HotkeyListener.Services.SystemSpecificStuff.ClipboardManagement;
+using HotkeyListener.Services.SystemSpecificStuff.InterProcessCommunication;
+using HotkeyListener.Services.SystemSpecificStuff.Keyboard;
+using HotkeyListener.Services.SystemSpecificStuff.Logging;
+using HotkeyListener.Services.Translation.Translators;
 
-namespace HotkeyListener.Services;
+namespace HotkeyListener.Services.Translation;
 
 internal sealed class TranslationWorkflow : IDisposable
 {

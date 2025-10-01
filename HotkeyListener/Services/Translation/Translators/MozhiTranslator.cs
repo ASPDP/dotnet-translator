@@ -1,25 +1,27 @@
 using System.Text.Json;
 using HotkeyListener.Models;
+using HotkeyListener.Services.SystemSpecificStuff.Logging;
 
-namespace HotkeyListener.Services.Translators;
+namespace HotkeyListener.Services.Translation.Translators;
 
 /// <summary>
-/// Translator that uses a custom DeepL API server.
+/// Translator that uses Mozhi translation API (supports Google, Yandex, etc.).
 /// </summary>
-internal sealed class DeepLTranslator : HttpTranslatorBase
+internal sealed class MozhiTranslator : HttpTranslatorBase
 {
+    private readonly string _engine;
     private readonly int _port;
 
-    public DeepLTranslator(HttpClient httpClient, int port = 3001)
-        : base(httpClient, "DeepL")
+    public MozhiTranslator(HttpClient httpClient, string engine, int port = 3000)
+        : base(httpClient, engine)
     {
+        _engine = engine;
         _port = port;
     }
 
     protected override async Task<string?> TranslateInternalAsync(string text, string sourceLanguage, string targetLanguage, CancellationToken cancellationToken)
     {
-        // DeepL server uses Google engine internally but on a different port
-        var engineValue = Uri.EscapeDataString("google");
+        var engineValue = Uri.EscapeDataString(_engine);
         var fromValue = Uri.EscapeDataString(sourceLanguage ?? string.Empty);
         var toValue = Uri.EscapeDataString(targetLanguage ?? string.Empty);
         var textValue = Uri.EscapeDataString(text);

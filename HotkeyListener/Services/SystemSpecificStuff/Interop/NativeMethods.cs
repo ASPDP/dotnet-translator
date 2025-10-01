@@ -1,7 +1,8 @@
 using System.Runtime.InteropServices;
+
 // ReSharper disable InconsistentNaming
 
-namespace HotkeyListener.Interop;
+namespace HotkeyListener.Services.SystemSpecificStuff.Interop;
 
 internal static class NativeMethods
 {

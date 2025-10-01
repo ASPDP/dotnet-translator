@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace HotkeyListener.Interop;
+namespace HotkeyListener.Services.SystemSpecificStuff.Interop;
 
 internal sealed class KeyboardHook : IDisposable
 {

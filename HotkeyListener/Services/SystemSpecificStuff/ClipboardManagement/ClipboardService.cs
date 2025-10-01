@@ -1,4 +1,6 @@
-namespace HotkeyListener.Services;
+using HotkeyListener.Services.SystemSpecificStuff.Logging;
+
+namespace HotkeyListener.Services.SystemSpecificStuff.ClipboardManagement;
 
 internal sealed class ClipboardService
 {

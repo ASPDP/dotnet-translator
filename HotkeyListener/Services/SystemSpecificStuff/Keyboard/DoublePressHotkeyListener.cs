@@ -1,6 +1,6 @@
-using HotkeyListener.Interop;
+using HotkeyListener.Services.SystemSpecificStuff.Interop;
 
-namespace HotkeyListener.Services;
+namespace HotkeyListener.Services.SystemSpecificStuff.Keyboard;
 
 internal sealed class DoublePressHotkeyListener : IDisposable, IHotkeySimulationGuard
 {

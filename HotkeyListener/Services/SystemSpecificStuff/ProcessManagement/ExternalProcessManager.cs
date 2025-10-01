@@ -1,8 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
 using HotkeyListener.Models;
+using HotkeyListener.Services.SystemSpecificStuff.Logging;
 
-namespace HotkeyListener.Services;
+namespace HotkeyListener.Services.SystemSpecificStuff.ProcessManagement;
 
 internal sealed class ExternalProcessManager : IDisposable
 {

@@ -1,8 +1,6 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
+using HotkeyListener.Services.SystemSpecificStuff.Keyboard;
 
-namespace HotkeyListener.Services;
+namespace HotkeyListener.Services.SystemSpecificStuff.ClipboardManagement;
 
 internal sealed class SelectionCaptureService
 {

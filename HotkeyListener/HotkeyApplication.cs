@@ -1,7 +1,11 @@
 using System.IO;
-using HotkeyListener.Interop;
-using HotkeyListener.Services;
-using HotkeyListener.Services.Translators;
+using HotkeyListener.Services.SystemSpecificStuff.ClipboardManagement;
+using HotkeyListener.Services.SystemSpecificStuff.Interop;
+using HotkeyListener.Services.SystemSpecificStuff.InterProcessCommunication;
+using HotkeyListener.Services.SystemSpecificStuff.Keyboard;
+using HotkeyListener.Services.SystemSpecificStuff.ProcessManagement;
+using HotkeyListener.Services.Translation;
+using HotkeyListener.Services.Translation.Translators;
 
 namespace HotkeyListener;
 
@@ -58,25 +62,12 @@ internal sealed class HotkeyApplication : IDisposable
         };
 
         // AI translators (slower, but provide additional context) - always run as variants
-        var aiTranslators = new List<ITranslator>
-        {
-            new OpenRouterTranslator(
-                openRouterHttpClient,
-                openRouterApiKey,
-                new OpenRouterConfig(
-                    ModelId: "x-ai/grok-4-fast:free",
-                    DisplayName: "Grok",
-                    IncludeErrorExplanation: true,
-                    StripReasoningTags: false)),
-            new OpenRouterTranslator(
-                openRouterHttpClient,
-                openRouterApiKey,
-                new OpenRouterConfig(
-                    ModelId: "deepseek/deepseek-chat-v3.1:free",
-                    DisplayName: "DeepSeek",
-                    IncludeErrorExplanation: false,
-                    StripReasoningTags: true))
-        };
+        // Load from config file (translators_config.json)
+        var openRouterConfigs = TranslatorsConfigLoader.LoadOpenRouterConfigs();
+        var aiTranslators = openRouterConfigs
+            .Select(config => new OpenRouterTranslator(openRouterHttpClient, openRouterApiKey, config))
+            .Cast<ITranslator>()
+            .ToList();
 
         var workflow = new TranslationWorkflow(
             selectionCapture,

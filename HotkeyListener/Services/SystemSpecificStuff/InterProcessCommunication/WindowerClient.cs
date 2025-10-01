@@ -1,9 +1,10 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.IO.Pipes;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using HotkeyListener.Services.SystemSpecificStuff.Logging;
 
-namespace HotkeyListener.Services;
+namespace HotkeyListener.Services.SystemSpecificStuff.InterProcessCommunication;
 
 internal sealed class WindowerClient
 {

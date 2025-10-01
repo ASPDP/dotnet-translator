@@ -4,8 +4,9 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
+using HotkeyListener.Services.SystemSpecificStuff.Logging;
 
-namespace HotkeyListener.Services;
+namespace HotkeyListener.Services.Http;
 
 internal sealed class HttpLoggingHandler : DelegatingHandler
 {

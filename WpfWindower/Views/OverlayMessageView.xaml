@@ -46,10 +46,17 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
                         <StackPanel Margin="0,4,0,0"
-                                    ToolTip="{Binding Explanation}"
                                     ToolTipService.ShowDuration="60000"
                                     MouseEnter="VariantItem_MouseEnter"
                                     MouseLeave="VariantItem_MouseLeave">
+                            <StackPanel.ToolTip>
+                                <ToolTip>
+                                    <TextBlock Text="{Binding Explanation}"
+                                               FontSize="16"
+                                               MaxWidth="400"
+                                               TextWrapping="Wrap" />
+                                </ToolTip>
+                            </StackPanel.ToolTip>
                             <TextBlock Text="{Binding Header}"
                                        Foreground="#FFBBD5FF"
                                        FontWeight="Bold"

@@ -1,4 +1,6 @@
-namespace HotkeyListener.Services.Translators;
+using HotkeyListener.Services.SystemSpecificStuff.Logging;
+
+namespace HotkeyListener.Services.Translation.Translators;
 
 /// <summary>
 /// Base class for translators that use HTTP to communicate with translation services.

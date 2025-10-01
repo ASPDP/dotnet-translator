@@ -2,8 +2,9 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using HotkeyListener.Models;
+using HotkeyListener.Services.SystemSpecificStuff.Logging;
 
-namespace HotkeyListener.Services;
+namespace HotkeyListener.Services.Http;
 
 internal sealed record TranslationApiSettings(string DefaultEngine, string FallbackEngine, int DefaultPort, int DeepLPort);
 
