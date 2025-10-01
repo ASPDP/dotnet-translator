@@ -77,7 +77,7 @@ internal sealed class HotkeyApplication : IDisposable
     {
         Application.Run();
     }
-
+    
     private void OnHotkeyTriggered(object? sender, EventArgs e)
     {
         _ = Task.Run(() => _workflow.HandleHotkeyAsync(_cts.Token));
